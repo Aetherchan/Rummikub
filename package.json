@@ -1,0 +1,19 @@
+{
+  "name": "rummikub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "以色列麻将（Rummikub）线上游戏",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "lint": "eslint packages/*/src --ext .ts,.tsx",
+    "clean": "rimraf packages/*/dist packages/*/node_modules"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "rimraf": "^6.0.0"
+  }
+}
