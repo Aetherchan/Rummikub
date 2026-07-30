@@ -14,6 +14,7 @@ import {
   isExpired,
   sortTiles, isJoker,
   validateBoardForCommit, diffMoves,
+  validateSet,
 } from '@rummikub/engine';
 import type { MoveBatch, AtomicMove } from '@rummikub/engine';
 import type { TurnTimer } from '@rummikub/engine';
@@ -113,6 +114,20 @@ function toggleInArray(arr: string[], id: string): string[] {
 function isE(result: unknown): result is GameError {
   return result instanceof GameError
     || (typeof result === 'object' && result !== null && 'code' in result && !('state' in result));
+}
+
+/** 推断牌组类型（用于显示"群组"还是"顺子"） */
+function inferSetType(tiles: TileInstance[]): 'group' | 'run' {
+  if (tiles.length >= 3) {
+    const result = validateSet(tiles);
+    if (result.valid && result.type) return result.type;
+  }
+  // 少于 3 张时用启发式：所有非Joker牌同数值 → group，否则 → run
+  const nonJokers = tiles.filter(t => !isJoker(t));
+  if (nonJokers.length >= 2 && nonJokers.every(t => t.value === nonJokers[0].value)) {
+    return 'group';
+  }
+  return 'run';
 }
 
 /** 如果是 P2P 主机模式，广播游戏状态给所有客户端 */
@@ -222,10 +237,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!tile) return;
 
     const newSetId = generateInstanceId();
+    const boardTile = { ...tile, jokerSubstitution: undefined } as TileOnBoard;
     const newSet: SetOnBoard = {
       id: newSetId,
-      tiles: [{ ...tile, jokerSubstitution: undefined } as TileOnBoard],
-      type: 'run',
+      tiles: [boardTile],
+      type: 'run', // 单张牌暂定为 run，后续添加牌时会重新推断
     };
 
     set({
@@ -261,11 +277,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({
       optimisticState: {
         ...os,
-        boardSets: os.boardSets.map(s =>
-          s.id === targetSetId
-            ? { ...s, tiles: [...s.tiles, boardTile] }
-            : s,
-        ),
+        boardSets: os.boardSets.map(s => {
+          if (s.id !== targetSetId) return s;
+          const newTiles = [...s.tiles, boardTile];
+          return { ...s, tiles: newTiles, type: inferSetType(newTiles) };
+        }),
         players: os.players.map((p, i) =>
           i === playerIdx
             ? {
@@ -293,10 +309,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const newSourceTiles = sourceSet.tiles.filter(t => t.instanceId !== instanceId);
     let newBoardSets = os.boardSets.map(s => {
       if (s.id === sourceSetId) {
-        return { ...s, tiles: newSourceTiles };
+        return { ...s, tiles: newSourceTiles, type: inferSetType(newSourceTiles) };
       }
       if (s.id === targetSetId) {
-        return { ...s, tiles: [...s.tiles, tile] };
+        const newTiles = [...s.tiles, tile];
+        return { ...s, tiles: newTiles, type: inferSetType(newTiles) };
       }
       return s;
     });
@@ -326,7 +343,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     // 从牌组移除，退回手牌（清除 Joker 替代值）
     const newSourceTiles = sourceSet.tiles.filter(t => t.instanceId !== instanceId);
     let newBoardSets = os.boardSets
-      .map(s => s.id === sourceSetId ? { ...s, tiles: newSourceTiles } : s)
+      .map(s => s.id === sourceSetId ? { ...s, tiles: newSourceTiles, type: inferSetType(newSourceTiles) } : s)
       .filter(s => s.tiles.length > 0);
 
     const handTile: TileInstance = {
@@ -375,8 +392,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   // ---- 提交走法（重写版：本地验证 + Diff 生成 AtomicMove） ----
 
   commitMove: () => {
-    const { optimisticState, turnSnapshot } = get();
-    if (!optimisticState || !turnSnapshot) return;
+    const { optimisticState, turnSnapshot, gameState } = get();
+    if (!optimisticState || !turnSnapshot || !gameState) return;
 
     const cp = optimisticState.players[optimisticState.currentPlayerIndex];
     const hasMelded = cp.hasMelded;
@@ -466,7 +483,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       moves,
     };
 
-    const result = applyMove(optimisticState, batch);
+    // 重要：使用 gameState 调用引擎（而非 optimisticState）。
+    // optimisticState 中手牌已被本地操作移除，引擎无法计算 scoreFromHand。
+    // gameState 保留了回合开始时的手牌状态，引擎可以正确验证。
+    const result = applyMove(gameState, batch);
     if (isE(result)) {
       const snapshot = turnSnapshot;
       if (!snapshot) return;

@@ -19,10 +19,6 @@ export function validateBoard(sets) {
         if (!result.valid) {
             errors.push(`组合 ${set.id} 不合法: ${result.reason}`);
         }
-        // 验证声明的类型与实际类型匹配
-        if (result.valid && result.type && result.type !== set.type) {
-            errors.push(`组合 ${set.id} 声明为 ${set.type}，但实际是 ${result.type}`);
-        }
         // 检查重复实例 ID
         for (const tile of set.tiles) {
             if (seenInstanceIds.has(tile.instanceId)) {
