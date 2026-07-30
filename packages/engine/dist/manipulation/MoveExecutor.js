@@ -36,8 +36,10 @@ function executeAddTiles(state, setId, tiles) {
     if (!set)
         throw new GameError(`组合 ${setId} 不存在`, 'SET_NOT_FOUND');
     const boardTiles = tiles.map((t) => {
+        // 保留 Joker 的替代值（如果调用方已设置）
+        const existingSub = t.jokerSubstitution;
         if (t.color === null && t.value === null) {
-            return { ...t, jokerSubstitution: undefined };
+            return { ...t, jokerSubstitution: existingSub };
         }
         return { ...t, jokerSubstitution: undefined };
     });
@@ -143,8 +145,10 @@ function executeCreateSet(state, setId, tiles) {
         : 'run'; // 回退默认值
     // 创建新组合
     const boardTiles = tiles.map((t) => {
+        // 保留 Joker 的替代值（如果调用方已设置）
+        const existingSub = t.jokerSubstitution;
         if (t.color === null && t.value === null) {
-            return { ...t, jokerSubstitution: undefined };
+            return { ...t, jokerSubstitution: existingSub };
         }
         return { ...t, jokerSubstitution: undefined };
     });

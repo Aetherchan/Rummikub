@@ -29,7 +29,7 @@ export default function HandTile({
     isDragging,
   } = useSortable({
     id: `hand-${tile.instanceId}`,
-    data: { tile, index, isHandTile: true },
+    data: { tile, instanceId: tile.instanceId, index, isHandTile: true },
     disabled: !isCurrentPlayer,
   });
 

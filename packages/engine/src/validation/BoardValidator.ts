@@ -1,6 +1,6 @@
 import type { TileOnBoard, TileInstance } from '@rummikub/shared';
 import type { SetOnBoard } from '@rummikub/shared';
-import { validateSet } from './SetValidator.js';
+import { validateSet, computeScore } from './SetValidator.js';
 
 // ============================================================
 // 桌面完整性验证器
@@ -10,6 +10,25 @@ import { validateSet } from './SetValidator.js';
 export interface BoardValidationResult {
   valid: boolean;
   errors: string[];
+}
+
+/** 单个牌组的提交前验证结果（与 SetValidator.SetValidationResult 区分） */
+export interface PerSetCommitResult {
+  setId: string;
+  tiles: TileOnBoard[];
+  valid: boolean;
+  reason?: string;
+  type?: 'group' | 'run';
+  score: number;
+}
+
+/** 提交前完整验证结果 */
+export interface BoardCommitValidationResult {
+  valid: boolean;
+  errors: string[];
+  setResults: PerSetCommitResult[];
+  scoreFromHand: number;
+  meldMet: boolean;
 }
 
 /**
@@ -62,4 +81,107 @@ export function validateBoardAfterMoves(
 ): { valid: boolean; errors: string[] } {
   // 简单场景：只检查所有组合合法且无重复
   return validateBoard(sets);
+}
+
+/**
+ * 提交前验证：逐组检查桌面牌组 + 破冰条件检查。
+ * 用于 UI 层在提交前验证，返回每组的详细结果用于高亮错误牌组。
+ */
+export function validateBoardForCommit(
+  sets: SetOnBoard[],
+  snapshotBoard: SetOnBoard[],
+  hasMelded: boolean,
+  initialMeldMinimum: number,
+): BoardCommitValidationResult {
+  const errors: string[] = [];
+  const seenInstanceIds = new Set<string>();
+
+  // 逐组验证
+  const setResults: PerSetCommitResult[] = sets.map(set => {
+    const result = validateSet(set.tiles);
+    const score = computeScore(set.tiles);
+
+    // 检查 instanceId 重复
+    for (const tile of set.tiles) {
+      if (seenInstanceIds.has(tile.instanceId)) {
+        return {
+          setId: set.id,
+          tiles: set.tiles,
+          valid: false,
+          reason: `牌 ${tile.instanceId} 在桌面上重复出现`,
+          score,
+        };
+      }
+      seenInstanceIds.add(tile.instanceId);
+    }
+
+    // 检查长度
+    if (set.tiles.length < 3) {
+      return {
+        setId: set.id,
+        tiles: set.tiles,
+        valid: false,
+        reason: `牌组只有 ${set.tiles.length} 张牌，至少需要 3 张`,
+        score,
+      };
+    }
+
+    if (!result.valid) {
+      return {
+        setId: set.id,
+        tiles: set.tiles,
+        valid: false,
+        reason: result.reason ?? '不合法',
+        score,
+      };
+    }
+
+    return {
+      setId: set.id,
+      tiles: set.tiles,
+      valid: true,
+      type: result.type,
+      score,
+    };
+  });
+
+  // 收集错误
+  for (const r of setResults) {
+    if (!r.valid) {
+      errors.push(`牌组 ${r.setId}: ${r.reason}`);
+    }
+  }
+
+  // 计算从手牌打出的分数
+  // 对比 snapshotBoard：找出所有不在 snapshot 中的 instanceId（新打到桌面的牌）
+  const snapshotIds = new Set<string>();
+  for (const s of snapshotBoard) {
+    for (const t of s.tiles) {
+      snapshotIds.add(t.instanceId);
+    }
+  }
+
+  let scoreFromHand = 0;
+  for (const s of sets) {
+    for (const t of s.tiles) {
+      if (!snapshotIds.has(t.instanceId)) {
+        // 这张牌不在回合开始时的桌面上 → 从手牌打出
+        scoreFromHand += computeScore([t]);
+      }
+    }
+  }
+
+  // 破冰检查
+  const meldMet = hasMelded || scoreFromHand >= initialMeldMinimum;
+  if (!meldMet && scoreFromHand > 0 && !hasMelded) {
+    errors.push(`破冰需要至少 ${initialMeldMinimum} 分，当前从手牌打出 ${scoreFromHand} 分`);
+  }
+
+  return {
+    valid: setResults.every(r => r.valid) && (hasMelded || scoreFromHand === 0 || meldMet),
+    errors,
+    setResults,
+    scoreFromHand,
+    meldMet,
+  };
 }

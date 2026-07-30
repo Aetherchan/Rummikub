@@ -3,6 +3,7 @@ import type {
   GameState, PlayerState, TileInstance,
   SetOnBoard, TurnPhase, PlayerId,
   GameStateDiff, ScoreEntry, GameConfig,
+  TileOnBoard, JokerSubstitution,
 } from '@rummikub/shared';
 import {
   createDefaultConfig, createPlayerState, createGameState,
@@ -12,12 +13,14 @@ import {
   createTimer, startTimer as startTimerFn, tickTimer, resetTimer,
   isExpired,
   sortTiles, isJoker,
+  validateBoardForCommit, diffMoves,
 } from '@rummikub/engine';
 import type { MoveBatch, AtomicMove } from '@rummikub/engine';
 import type { TurnTimer } from '@rummikub/engine';
 import { generateInstanceId, GameError } from '@rummikub/engine';
 import { easyBotDecide, mediumBotDecide, hardBotDecide, generateMoveOptions } from '../bot';
 import type { BotDecision } from '../bot';
+import { useToastStore } from './toast-store';
 
 // ---- 类型 ----
 
@@ -51,6 +54,8 @@ interface LocalGameState {
   p2pDisconnected: boolean;
   /** 游戏结束时的最终得分（P2P 客户端可能没有完整手牌数据） */
   finalScores: ScoreEntry[] | null;
+  /** 提交验证失败时的牌组 ID 列表（用于 UI 高亮） */
+  invalidSetIds: string[];
 }
 
 interface GameActions {
@@ -86,6 +91,12 @@ interface GameActions {
   sendP2PDrawTile: () => void;
   sendP2PPassTurn: () => void;
   setP2PDisconnected: (v: boolean) => void;
+  // 本地操作（直接修改 optimisticState，提交时用 diff 生成 AtomicMove）
+  moveTileFromHandToNewSet: (instanceId: string) => void;
+  moveTileFromHandToSet: (instanceId: string, targetSetId: string) => void;
+  moveTileBetweenSets: (instanceId: string, sourceSetId: string, targetSetId: string) => void;
+  moveTileFromBoardToHand: (instanceId: string, sourceSetId: string) => void;
+  setJokerSubstitution: (instanceId: string, substitution: JokerSubstitution) => void;
 }
 
 export type GameStore = LocalGameState & GameActions;
@@ -143,6 +154,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   _clientRoom: null,
   p2pDisconnected: false,
   finalScores: null,
+  invalidSetIds: [],
 
   setPendingConfig: (partial) => set(s => ({
     pendingConfig: { ...s.pendingConfig, ...partial },
@@ -192,17 +204,252 @@ export const useGameStore = create<GameStore>((set, get) => ({
   toggleHandTile: (instanceId) => set(s => ({
     selectedHandIds: toggleInArray(s.selectedHandIds, instanceId),
     hintedTileIds: [], // 点击牌时自动清除提示
+    invalidSetIds: [], // 操作时清除错误状态
   })),
 
   toggleBoardTile: (instanceId) => set(s => ({
     selectedBoardIds: toggleInArray(s.selectedBoardIds, instanceId),
+    invalidSetIds: [],
   })),
 
-  commitMove: (moves) => {
-    const { optimisticState } = get();
-    if (!optimisticState) return;
+  // ---- 本地操作（直接修改 optimisticState） ----
+
+  moveTileFromHandToNewSet: (instanceId) => {
+    const os = get().optimisticState;
+    if (!os) return;
+    const playerIdx = os.currentPlayerIndex;
+    const tile = os.players[playerIdx].handTiles.find(t => t.instanceId === instanceId);
+    if (!tile) return;
+
+    const newSetId = generateInstanceId();
+    const newSet: SetOnBoard = {
+      id: newSetId,
+      tiles: [{ ...tile, jokerSubstitution: undefined } as TileOnBoard],
+      type: 'run',
+    };
+
+    set({
+      optimisticState: {
+        ...os,
+        boardSets: [...os.boardSets, newSet],
+        players: os.players.map((p, i) =>
+          i === playerIdx
+            ? {
+              ...p,
+              handTiles: p.handTiles.filter(t => t.instanceId !== instanceId),
+              handTileCount: p.handTileCount - 1,
+            }
+            : p,
+        ),
+      } as GameState,
+      invalidSetIds: [],
+    });
+  },
+
+  moveTileFromHandToSet: (instanceId, targetSetId) => {
+    const os = get().optimisticState;
+    if (!os) return;
+    const playerIdx = os.currentPlayerIndex;
+    const tile = os.players[playerIdx].handTiles.find(t => t.instanceId === instanceId);
+    if (!tile) return;
+
+    const targetSet = os.boardSets.find(s => s.id === targetSetId);
+    if (!targetSet) return;
+
+    const boardTile = { ...tile, jokerSubstitution: undefined } as TileOnBoard;
+
+    set({
+      optimisticState: {
+        ...os,
+        boardSets: os.boardSets.map(s =>
+          s.id === targetSetId
+            ? { ...s, tiles: [...s.tiles, boardTile] }
+            : s,
+        ),
+        players: os.players.map((p, i) =>
+          i === playerIdx
+            ? {
+              ...p,
+              handTiles: p.handTiles.filter(t => t.instanceId !== instanceId),
+              handTileCount: p.handTileCount - 1,
+            }
+            : p,
+        ),
+      } as GameState,
+      invalidSetIds: [],
+    });
+  },
+
+  moveTileBetweenSets: (instanceId, sourceSetId, targetSetId) => {
+    const os = get().optimisticState;
+    if (!os) return;
+
+    const sourceSet = os.boardSets.find(s => s.id === sourceSetId);
+    if (!sourceSet) return;
+    const tile = sourceSet.tiles.find(t => t.instanceId === instanceId);
+    if (!tile) return;
+
+    // 从源牌组移除，加入目标牌组
+    const newSourceTiles = sourceSet.tiles.filter(t => t.instanceId !== instanceId);
+    let newBoardSets = os.boardSets.map(s => {
+      if (s.id === sourceSetId) {
+        return { ...s, tiles: newSourceTiles };
+      }
+      if (s.id === targetSetId) {
+        return { ...s, tiles: [...s.tiles, tile] };
+      }
+      return s;
+    });
+
+    // 过滤空牌组
+    newBoardSets = newBoardSets.filter(s => s.tiles.length > 0);
+
+    set({
+      optimisticState: {
+        ...os,
+        boardSets: newBoardSets,
+      } as GameState,
+      invalidSetIds: [],
+    });
+  },
+
+  moveTileFromBoardToHand: (instanceId, sourceSetId) => {
+    const os = get().optimisticState;
+    if (!os) return;
+    const playerIdx = os.currentPlayerIndex;
+
+    const sourceSet = os.boardSets.find(s => s.id === sourceSetId);
+    if (!sourceSet) return;
+    const tile = sourceSet.tiles.find(t => t.instanceId === instanceId);
+    if (!tile) return;
+
+    // 从牌组移除，退回手牌（清除 Joker 替代值）
+    const newSourceTiles = sourceSet.tiles.filter(t => t.instanceId !== instanceId);
+    let newBoardSets = os.boardSets
+      .map(s => s.id === sourceSetId ? { ...s, tiles: newSourceTiles } : s)
+      .filter(s => s.tiles.length > 0);
+
+    const handTile: TileInstance = {
+      id: tile.id,
+      color: tile.color,
+      value: tile.value,
+      instanceId: tile.instanceId,
+    };
+
+    set({
+      optimisticState: {
+        ...os,
+        boardSets: newBoardSets,
+        players: os.players.map((p, i) =>
+          i === playerIdx
+            ? {
+              ...p,
+              handTiles: [...p.handTiles, handTile],
+              handTileCount: p.handTileCount + 1,
+            }
+            : p,
+        ),
+      } as GameState,
+      invalidSetIds: [],
+    });
+  },
+
+  setJokerSubstitution: (instanceId, substitution) => {
+    const os = get().optimisticState;
+    if (!os) return;
+    set({
+      optimisticState: {
+        ...os,
+        boardSets: os.boardSets.map(set => ({
+          ...set,
+          tiles: set.tiles.map(tile =>
+            tile.instanceId === instanceId
+              ? { ...tile, jokerSubstitution: substitution }
+              : tile,
+          ),
+        })),
+      } as GameState,
+    });
+  },
+
+  // ---- 提交走法（重写版：本地验证 + Diff 生成 AtomicMove） ----
+
+  commitMove: () => {
+    const { optimisticState, turnSnapshot } = get();
+    if (!optimisticState || !turnSnapshot) return;
 
     const cp = optimisticState.players[optimisticState.currentPlayerIndex];
+    const hasMelded = cp.hasMelded;
+
+    // 1. 检查所有 Joker 都有替代值
+    for (const set of optimisticState.boardSets) {
+      for (const tile of set.tiles) {
+        if (isJoker(tile) && !(tile as TileOnBoard).jokerSubstitution) {
+          useToastStore.getState().toast({
+            type: 'error',
+            message: '百搭牌 (Joker) 需要设置替代值，请点击 Joker 牌设置',
+            duration: 4000,
+          });
+          // 标记该牌组为无效
+          set({ invalidSetIds: [set.id] });
+          return;
+        }
+      }
+    }
+
+    // 2. 本地验证桌面牌组
+    const validation = validateBoardForCommit(
+      optimisticState.boardSets,
+      turnSnapshot.boardSets,
+      hasMelded,
+      optimisticState.config.initialMeldMinimum,
+    );
+
+    if (!validation.valid) {
+      // 显示错误 toast
+      const firstError = validation.errors[0] ?? '牌组不合法';
+      useToastStore.getState().toast({
+        type: 'error',
+        message: `出牌无效: ${firstError}`,
+        duration: 5000,
+      });
+      // 高亮无效牌组
+      const invalidIds = validation.setResults
+        .filter(r => !r.valid)
+        .map(r => r.setId);
+      set({ invalidSetIds: invalidIds.length > 0 ? invalidIds : [] });
+      return;
+    }
+
+    // 如果玩家尚未破冰，额外检查破冰分数
+    if (!hasMelded && validation.scoreFromHand > 0 && !validation.meldMet) {
+      useToastStore.getState().toast({
+        type: 'error',
+        message: `破冰需要至少 ${optimisticState.config.initialMeldMinimum} 分，当前从手牌打出 ${validation.scoreFromHand} 分`,
+        duration: 5000,
+      });
+      set({ invalidSetIds: optimisticState.boardSets.map(s => s.id) });
+      return;
+    }
+
+    // 3. 检查是否有操作（没有操作则不允许提交）
+    const moves = diffMoves(
+      turnSnapshot.boardSets,
+      optimisticState.boardSets,
+      turnSnapshot.players[turnSnapshot.currentPlayerIndex].handTiles,
+      optimisticState.players[optimisticState.currentPlayerIndex].handTiles,
+    );
+
+    if (moves.length === 0) {
+      useToastStore.getState().toast({
+        type: 'warning',
+        message: '没有打出任何牌，请先操作牌组或选择摸牌/跳过',
+        duration: 3000,
+      });
+      return;
+    }
+
+    // 4. 提交到引擎验证
     const batch: MoveBatch = {
       moveId: generateInstanceId(),
       playerId: cp.id,
@@ -211,11 +458,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     const result = applyMove(optimisticState, batch);
     if (isE(result)) {
-      const { turnSnapshot } = get();
-      if (!turnSnapshot) return;
+      const snapshot = turnSnapshot;
+      if (!snapshot) return;
 
       const hasTimeLimit = optimisticState.config.turnTimeLimitSeconds > 0;
-      const recovery = handleInvalidAttempt(turnSnapshot, hasTimeLimit);
+      const recovery = handleInvalidAttempt(snapshot, hasTimeLimit);
       const ns = recovery.state;
       const newSnapshot = createSnapshot(ns);
 
@@ -226,8 +473,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
         selectedHandIds: [],
         selectedBoardIds: [],
         hintedTileIds: [],
+        invalidSetIds: [],
         timer: createTimer(ns.config.turnTimeLimitSeconds),
       });
+
+      if (hasTimeLimit) {
+        useToastStore.getState().toast({
+          type: 'error',
+          message: '出牌无效！罚摸 3 张牌',
+          duration: 4000,
+        });
+      } else {
+        useToastStore.getState().toast({
+          type: 'error',
+          message: '出牌无效！已恢复回合开始状态',
+          duration: 3000,
+        });
+      }
 
       if (ns.phase !== 'GAME_OVER' && ns.players[ns.currentPlayerIndex]?.isBot) {
         setTimeout(() => get().botMove([]), 500);
@@ -247,6 +509,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedHandIds: [],
       selectedBoardIds: [],
       hintedTileIds: [],
+      invalidSetIds: [],
       timer: newTimer,
     });
 
@@ -349,6 +612,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedHandIds: [],
       selectedBoardIds: [],
       hintedTileIds: [],
+      invalidSetIds: [],
     });
   },
 

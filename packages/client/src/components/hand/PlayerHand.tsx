@@ -1,18 +1,8 @@
 import type { TileInstance } from '@rummikub/shared';
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-} from '@dnd-kit/core';
+import { useDroppable } from '@dnd-kit/core';
 import {
   SortableContext,
   horizontalListSortingStrategy,
-  sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable';
 import HandTile from './HandTile';
 
@@ -22,9 +12,6 @@ interface PlayerHandProps {
   hintedTileIds: string[];
   isCurrentPlayer: boolean;
   onTileClick: (tile: TileInstance) => void;
-  onDragStart: (event: DragStartEvent) => void;
-  onDragEnd: (event: DragEndEvent) => void;
-  onReorder: (activeId: string, overId: string) => void;
 }
 
 export default function PlayerHand({
@@ -33,27 +20,12 @@ export default function PlayerHand({
   hintedTileIds,
   isCurrentPlayer,
   onTileClick,
-  onDragStart,
-  onDragEnd,
-  onReorder,
 }: PlayerHandProps) {
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 5 },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
-  );
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    onDragEnd(event);
-
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      onReorder(String(active.id), String(over.id));
-    }
-  };
+  // 手牌区作为拖放目标（桌面牌可以拖回手牌）
+  const { setNodeRef: dropRef, isOver } = useDroppable({
+    id: 'hand-area',
+    data: { type: 'hand-area' },
+  });
 
   if (tiles.length === 0) {
     return (
@@ -64,30 +36,29 @@ export default function PlayerHand({
   }
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragStart={onDragStart}
-      onDragEnd={handleDragEnd}
+    <SortableContext
+      items={tiles.map(t => `hand-${t.instanceId}`)}
+      strategy={horizontalListSortingStrategy}
     >
-      <SortableContext
-        items={tiles.map(t => `hand-${t.instanceId}`)}
-        strategy={horizontalListSortingStrategy}
+      <div
+        ref={dropRef}
+        className={[
+          'flex flex-wrap gap-1 justify-center px-2 pb-2 min-h-[5rem] rounded-lg transition-colors',
+          isOver && 'bg-green-600/30 border-2 border-dashed border-green-400',
+        ].filter(Boolean).join(' ')}
       >
-        <div className="flex flex-wrap gap-1 justify-center px-2 pb-2">
-          {tiles.map((tile, index) => (
-            <HandTile
-              key={tile.instanceId}
-              tile={tile}
-              index={index}
-              selected={selectedTileIds.includes(tile.instanceId)}
-              hinted={hintedTileIds.includes(tile.instanceId)}
-              isCurrentPlayer={isCurrentPlayer}
-              onTileClick={onTileClick}
-            />
-          ))}
-        </div>
-      </SortableContext>
-    </DndContext>
+        {tiles.map((tile, index) => (
+          <HandTile
+            key={tile.instanceId}
+            tile={tile}
+            index={index}
+            selected={selectedTileIds.includes(tile.instanceId)}
+            hinted={hintedTileIds.includes(tile.instanceId)}
+            isCurrentPlayer={isCurrentPlayer}
+            onTileClick={onTileClick}
+          />
+        ))}
+      </div>
+    </SortableContext>
   );
 }

@@ -45,8 +45,10 @@ function executeAddTiles(state: GameState, setId: SetId, tiles: TileInstance[]):
   if (!set) throw new GameError(`组合 ${setId} 不存在`, 'SET_NOT_FOUND');
 
   const boardTiles: TileOnBoard[] = tiles.map((t: TileInstance): TileOnBoard => {
+    // 保留 Joker 的替代值（如果调用方已设置）
+    const existingSub = (t as any).jokerSubstitution;
     if (t.color === null && t.value === null) {
-      return { ...t, jokerSubstitution: undefined } as TileOnBoard;
+      return { ...t, jokerSubstitution: existingSub } as TileOnBoard;
     }
     return { ...t, jokerSubstitution: undefined } as TileOnBoard;
   });
@@ -178,8 +180,10 @@ function executeCreateSet(state: GameState, setId: SetId, tiles: TileInstance[])
 
   // 创建新组合
   const boardTiles: TileOnBoard[] = tiles.map((t: TileInstance): TileOnBoard => {
+    // 保留 Joker 的替代值（如果调用方已设置）
+    const existingSub = (t as any).jokerSubstitution;
     if (t.color === null && t.value === null) {
-      return { ...t, jokerSubstitution: undefined } as TileOnBoard;
+      return { ...t, jokerSubstitution: existingSub } as TileOnBoard;
     }
     return { ...t, jokerSubstitution: undefined } as TileOnBoard;
   });
