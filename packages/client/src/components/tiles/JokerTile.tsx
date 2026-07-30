@@ -5,6 +5,8 @@ import TileFace from './TileFace';
 interface JokerTileProps {
   tile: TileOnBoard;
   small?: boolean;
+  selected?: boolean;
+  hinted?: boolean;
   onClick?: () => void;
 }
 
@@ -12,7 +14,7 @@ interface JokerTileProps {
  * 桌面牌（含 Joker 替换信息）。
  * 如果 Joker 被替换为特定颜色/数值，显示替换后的外观。
  */
-export default function JokerTile({ tile, small, onClick }: JokerTileProps) {
+export default function JokerTile({ tile, small, selected, hinted, onClick }: JokerTileProps) {
   // Joker 已被替换 → 以替换后的颜色和数值显示，但保持 Joker 标记
   if (isJoker(tile) && tile.jokerSubstitution) {
     const sub = tile.jokerSubstitution;
@@ -27,6 +29,8 @@ export default function JokerTile({ tile, small, onClick }: JokerTileProps) {
           'tile',
           colorClass,
           small && 'w-9 h-12 text-sm min-w-[2.25rem]',
+          selected && 'tile-selected',
+          hinted && 'tile-hint',
           'relative',
         ].filter(Boolean).join(' ')}
       >
@@ -38,5 +42,5 @@ export default function JokerTile({ tile, small, onClick }: JokerTileProps) {
     );
   }
 
-  return <TileFace tile={tile} small={small} onClick={onClick} />;
+  return <TileFace tile={tile} small={small} selected={selected} hinted={hinted} onClick={onClick} />;
 }

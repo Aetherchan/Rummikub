@@ -176,7 +176,7 @@ function findRuns(
 ): void {
   // 按颜色分组
   const byColor = new Map<string, TileInstance[]>();
-  let jokers: TileInstance[] = [];
+  const jokers: TileInstance[] = [];
 
   for (const tile of hand) {
     if (isJoker(tile)) {
@@ -188,15 +188,14 @@ function findRuns(
     }
   }
 
-  // 对每种颜色，找连续序列
+  // 对每种颜色，找连续序列（仅非Joker）
   for (const [_color, tiles] of byColor) {
     const sorted = [...tiles].sort((a, b) => (a.value ?? 0) - (b.value ?? 0));
-    if (sorted.length < 2) continue; // 至少需要 2 张非 joker 才能形成 run
+    if (sorted.length < 2) continue;
 
     // 滑动窗口找连续段
     for (let i = 0; i < sorted.length; i++) {
       for (let j = i + 2; j < sorted.length; j++) {
-        // i..j 应该连续
         const segment = sorted.slice(i, j + 1);
         const result = isValidRun(segment);
         if (result.valid) {
@@ -207,7 +206,15 @@ function findRuns(
   }
 }
 
-/** 找包含 joker 的 runs */
+/**
+ * 找包含 joker 的 runs。
+ * 对每种颜色，取手牌中该颜色的非Joker牌，尝试用Joker填充 gaps。
+ * 处理以下情况：
+ * - 两张牌 gap=1（连续）+ 1 Joker 延伸 → [4,5] + J → [4,5,Joker]
+ * - 两张牌 gap=2（跳一格）+ 1 Joker 填中 → [4,6] + J → [4,Joker,6]
+ * - 单张牌 + 2 Jokers → [4] + 2J → [4,Joker,Joker]
+ * - 多张连续牌 + 1 Joker 延伸
+ */
 function findRunsWithJokers(
   hand: TileInstance[],
   results: TileInstance[][],
@@ -215,8 +222,6 @@ function findRunsWithJokers(
   const jokers = hand.filter(isJoker);
   if (jokers.length === 0) return;
 
-  // 简单策略：joker 可替代任意一张缺失的牌
-  // 在 runs 中，尝试在各种位置插入 joker
   const nonJokers = hand.filter(t => !isJoker(t));
   const byColor = new Map<string, TileInstance[]>();
   for (const tile of nonJokers) {
@@ -227,23 +232,78 @@ function findRunsWithJokers(
 
   for (const [_color, tiles] of byColor) {
     const sorted = [...tiles].sort((a, b) => (a.value ?? 0) - (b.value ?? 0));
-    if (sorted.length < 1) continue;
+    if (sorted.length === 0) continue;
 
-    // 单张牌 + 2 joker 也可以形成最小 run
-    if (sorted.length === 1 && jokers.length >= 2) {
-      const run = [sorted[0], jokers[0], { ...jokers[0], instanceId: generateInstanceId() }];
-      if (isValidRun(run).valid) results.push(run);
+    // 对每个连续子段，尝试用 Joker 填充 gaps
+    for (let i = 0; i < sorted.length; i++) {
+      for (let j = i; j < sorted.length; j++) {
+        const segment = sorted.slice(i, j + 1);
+        const values = segment.map(t => t.value!);
+
+        // 检查值唯一性（run 中不允许重复值）
+        if (new Set(values).size !== values.length) continue;
+
+        const minV = Math.min(...values);
+        const maxV = Math.max(...values);
+        const span = maxV - minV + 1; // 需要的连续值个数
+        const needed = span - segment.length; // 需要填充的 Joker 数
+
+        // Joker 也可以在两端延伸（额外 +1 或 +2）
+        const extraJokers = jokers.length - needed;
+
+        if (needed < 0) continue; // 重复值导致 span 小于长度
+        if (needed > jokers.length) continue; // Joker 不够填 gaps
+
+        // 基本 run：填充内部 gaps
+        if (needed <= jokers.length) {
+          const totalLength = span;
+          if (totalLength >= 3 && totalLength <= 13) {
+            const run = [...segment];
+            for (let k = 0; k < needed; k++) {
+              run.push({ ...jokers[0], instanceId: generateInstanceId() });
+            }
+            if (isValidRun(run).valid) {
+              results.push(run);
+            }
+          }
+        }
+
+        // Joker 在末尾延伸（前或后）
+        if (extraJokers > 0 && span >= 2) {
+          // 往后延伸
+          if (span + 1 >= 3 && span + 1 <= 13) {
+            const run = [...segment];
+            for (let k = 0; k < needed + 1; k++) {
+              run.push({ ...jokers[0], instanceId: generateInstanceId() });
+            }
+            if (isValidRun(run).valid) {
+              results.push(run);
+            }
+          }
+          // 往前延伸
+          if (span + 1 >= 3 && span + 1 <= 13 && extraJokers >= 2) {
+            const run = [...segment];
+            for (let k = 0; k < needed + 2; k++) {
+              run.push({ ...jokers[0], instanceId: generateInstanceId() });
+            }
+            if (isValidRun(run).valid) {
+              results.push(run);
+            }
+          }
+        }
+      }
     }
 
-    // 两张连续牌 + 1 joker
-    if (sorted.length >= 2) {
-      for (let i = 0; i < sorted.length - 1; i++) {
-        const gap = (sorted[i + 1].value ?? 0) - (sorted[i].value ?? 0);
-        if (gap === 2 && jokers.length >= 1) {
-          // joker 填补中间
-          const run = [sorted[i], jokers[0], sorted[i + 1]];
-          if (isValidRun(run).valid) results.push(run);
-        }
+    // 单张牌 + 2+ Jokers（之前循环中 i===j 且 segment.length===1 时，span=1, needed=0, totalLength=1 不够3）
+    // 但上面的代码中 extraJokers 处理会尝试延伸
+    // 单独处理：1张牌 + 2 Jokers
+    if (sorted.length >= 1 && jokers.length >= 2) {
+      for (const tile of sorted) {
+        const run1 = [tile,
+          { ...jokers[0], instanceId: generateInstanceId() },
+          { ...jokers[0], instanceId: generateInstanceId() },
+        ];
+        if (isValidRun(run1).valid) results.push(run1);
       }
     }
   }

@@ -89,8 +89,34 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
 
   const handleCommit = () => {
     const hand = myHand.filter(t => selectedHandIds.includes(t.instanceId));
-    if (hand.length > 0) {
-      // 从选中的手牌构建 CREATE_SET 走法
+
+    // 判断是否选中了桌面牌：找出 selectedBoardIds 属于哪个 boardSet
+    let targetSetId: string | null = null;
+    if (selectedBoardIds.length > 0) {
+      for (const setId of selectedBoardIds) {
+        // selectedBoardIds 直接存 set.id 或 tile.instanceId
+        const foundSet = optimisticState.boardSets.find(s => s.id === setId);
+        if (foundSet) {
+          targetSetId = setId;
+          break;
+        }
+        // 也可能是 tile 的 instanceId
+        const foundByTile = optimisticState.boardSets.find(s =>
+          s.tiles.some(t => t.instanceId === setId),
+        );
+        if (foundByTile) {
+          targetSetId = foundByTile.id;
+          break;
+        }
+      }
+    }
+
+    if (hand.length > 0 && targetSetId) {
+      // 有手牌选中 + 有桌面牌组选中 → 贴牌
+      const moves = [{ type: 'ADD_TILES_TO_SET' as const, setId: targetSetId, tiles: hand }];
+      commitMove(moves);
+    } else if (hand.length > 0) {
+      // 只有手牌选中 → 创建新牌组
       const setId = `set-${Date.now()}`;
       const moves = [{ type: 'CREATE_SET' as const, setId, tiles: hand }];
       commitMove(moves);
