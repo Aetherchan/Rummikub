@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-green-900 text-white min-h-screen;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer components {
+  .tile {
+    @apply w-12 h-16 rounded-lg border-2 flex flex-col items-center justify-center
+           select-none cursor-pointer font-bold text-lg shadow-md
+           transition-transform hover:scale-105;
+    min-width: 3rem;
+  }
+  .tile-red {
+    @apply bg-red-50 border-red-500 text-red-700;
+  }
+  .tile-blue {
+    @apply bg-blue-50 border-blue-500 text-blue-700;
+  }
+  .tile-yellow {
+    @apply bg-yellow-50 border-yellow-500 text-yellow-700;
+  }
+  .tile-black {
+    @apply bg-gray-100 border-gray-800 text-gray-800;
+  }
+  .tile-joker {
+    @apply bg-gradient-to-br from-yellow-300 to-orange-400 border-orange-500 text-orange-800;
+  }
+  .tile-selected {
+    @apply ring-4 ring-cyan-400 scale-110;
+  }
+  .tile-hint {
+    @apply ring-4 ring-green-400 animate-pulse;
+  }
+  .board-set {
+    @apply flex gap-1 p-2 rounded-lg border-2 border-dashed border-green-600/50
+           min-h-[5rem] items-center;
+  }
+  .board-set-droppable {
+    @apply border-green-400/80 bg-green-700/30;
+  }
+}

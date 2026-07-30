@@ -1,0 +1,35 @@
+import type { SetOnBoard, TileOnBoard } from '@rummikub/shared';
+import { useDroppable } from '@dnd-kit/core';
+import JokerTile from '../tiles/JokerTile';
+
+interface BoardSetProps {
+  set: SetOnBoard;
+  selectedTileIds: string[];
+  onTileClick: (tile: TileOnBoard) => void;
+}
+
+export default function BoardSetView({ set, selectedTileIds, onTileClick }: BoardSetProps) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `board-set-${set.id}`,
+    data: { setId: set.id, isBoardSet: true },
+  });
+
+  const typeLabel = set.type === 'group' ? '群组' : '顺子';
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={['board-set', isOver && 'board-set-droppable'].filter(Boolean).join(' ')}
+    >
+      <span className="text-green-400 text-xs mr-1 font-mono">{typeLabel}</span>
+      {set.tiles.map(tile => (
+        <JokerTile
+          key={tile.instanceId}
+          tile={tile}
+          small={set.tiles.length > 6}
+          onClick={() => onTileClick(tile)}
+        />
+      ))}
+    </div>
+  );
+}
