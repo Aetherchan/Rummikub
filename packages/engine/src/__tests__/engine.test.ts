@@ -32,6 +32,8 @@ import {
   createTimer, startTimer, tickTimer, isExpired, pauseTimer, resetTimer,
   // New GameState functions
   handleInvalidAttempt, handleTimeout, getConsecutivePasses,
+  // MoveDiffer
+  diffMoves,
 } from '../index.js';
 
 // ============================================================
@@ -614,7 +616,165 @@ describe('MoveValidator', () => {
 });
 
 // ============================================================
-// 10. 计分测试
+// 10. Diff 走法生成测试 (MoveDiffer)
+// ============================================================
+describe('MoveDiffer', () => {
+  function makeTile(id: string, color: string, value: number) {
+    return createTileInstance({ id, color: color as any, value: value as any });
+  }
+
+  function makeBoardSet(id: string, tiles: ReturnType<typeof makeTile>[], type: 'group' | 'run' = 'run') {
+    return { id, tiles: tiles.map(t => ({ ...t, jokerSubstitution: undefined })), type };
+  }
+
+  it('拆分尾部 + 手牌附加 (split tail + hand tile)', () => {
+    // 模拟：场上 [黄4,5,6,7,8,9,10] + 手牌黄7 → 拆成 [4,5,6,7] 和 [7(手),8,9,10]
+    const y4 = makeTile('y4', 'yellow', 4);
+    const y5 = makeTile('y5', 'yellow', 5);
+    const y6 = makeTile('y6', 'yellow', 6);
+    const y7Board = makeTile('y7b', 'yellow', 7);
+    const y8 = makeTile('y8', 'yellow', 8);
+    const y9 = makeTile('y9', 'yellow', 9);
+    const y10 = makeTile('y10', 'yellow', 10);
+    const y7Hand = makeTile('y7h', 'yellow', 7);
+
+    const snapshotBoard = [
+      makeBoardSet('A', [y4, y5, y6, y7Board, y8, y9, y10]),
+    ];
+
+    const currentBoard = [
+      makeBoardSet('A', [y4, y5, y6, y7Board]),
+      makeBoardSet('B', [y7Hand, y8, y9, y10]),
+    ];
+
+    const moves = diffMoves(snapshotBoard, currentBoard);
+
+    // 应该生成合法的走法（回退策略 DISMISS + CREATE）
+    expect(moves.length).toBeGreaterThan(0);
+    // 每条走法都应该是已知类型
+    const validTypes = ['CREATE_SET', 'ADD_TILES_TO_SET', 'REMOVE_TILES_FROM_SET',
+      'SPLIT_SET', 'MERGE_SETS', 'DISMISS_SET'];
+    for (const m of moves) {
+      expect(validTypes).toContain(m.type);
+    }
+
+    // 能正常执行（不抛异常）
+    const state = createGameState('test', [
+      {
+        ...createPlayerState('p1', '玩家1'),
+        handTiles: [y7Hand, y4, y5, y6, y7Board, y8, y9, y10],
+        handTileCount: 7,
+        hasMelded: true,
+      },
+      { ...createPlayerState('p2', 'AI'), handTiles: [], handTileCount: 0 },
+    ], createDefaultConfig({ maxPlayers: 2 }));
+
+    // 先让 snapshot 牌组在桌面上
+    let gs: any = { ...state, phase: 'IN_PROGRESS', turnPhase: 'ARRANGING', turnNumber: 1, poolTileCount: 80, _deck: [] };
+    gs = executeAtomicMove(gs, {
+      type: 'CREATE_SET', setId: 'A',
+      tiles: [y4, y5, y6, y7Board, y8, y9, y10],
+    });
+    // 把牌放回手牌以模拟快照状态
+    gs = {
+      ...gs,
+      boardSets: [makeBoardSet('A', [y4, y5, y6, y7Board, y8, y9, y10])],
+      players: gs.players.map((p: any, i: number) =>
+        i === 0 ? { ...p, handTiles: [y7Hand], handTileCount: 1 } : p),
+    };
+
+    // 执行走法不应报错
+    const result = executeMoveBatch(gs, moves);
+    // 执行后桌面应该有两个牌组
+    expect(result.boardSets.length).toBe(2);
+    // 每个牌组至少 3 张
+    for (const s of result.boardSets) {
+      expect(s.tiles.length).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('拆分头部 + 手牌附加 (split head + hand tile)', () => {
+    // 模拟：场上 [黄4,5,6,7,8,9,10] + 手牌黄7 → 拆成 [7(手),8,9,10] 和 [4,5,6,7]
+    const y4 = makeTile('y4', 'yellow', 4);
+    const y5 = makeTile('y5', 'yellow', 5);
+    const y6 = makeTile('y6', 'yellow', 6);
+    const y7Board = makeTile('y7b', 'yellow', 7);
+    const y8 = makeTile('y8', 'yellow', 8);
+    const y9 = makeTile('y9', 'yellow', 9);
+    const y10 = makeTile('y10', 'yellow', 10);
+    const y7Hand = makeTile('y7h', 'yellow', 7);
+
+    const snapshotBoard = [
+      makeBoardSet('A', [y4, y5, y6, y7Board, y8, y9, y10]),
+    ];
+
+    // Split head: first set gets the tail, second set is the head + hand tile
+    const currentBoard = [
+      makeBoardSet('A', [y7Board, y8, y9, y10]),
+      makeBoardSet('B', [y4, y5, y6, y7Hand]),
+    ];
+
+    const moves = diffMoves(snapshotBoard, currentBoard);
+    expect(moves.length).toBeGreaterThan(0);
+
+    const state = createGameState('test', [
+      {
+        ...createPlayerState('p1', '玩家1'),
+        handTiles: [y7Hand, y4, y5, y6, y7Board, y8, y9, y10],
+        handTileCount: 7,
+        hasMelded: true,
+      },
+      { ...createPlayerState('p2', 'AI'), handTiles: [], handTileCount: 0 },
+    ], createDefaultConfig({ maxPlayers: 2 }));
+
+    let gs: any = { ...state, phase: 'IN_PROGRESS', turnPhase: 'ARRANGING', turnNumber: 1, poolTileCount: 80, _deck: [] };
+    gs = executeAtomicMove(gs, {
+      type: 'CREATE_SET', setId: 'A',
+      tiles: [y4, y5, y6, y7Board, y8, y9, y10],
+    });
+    gs = {
+      ...gs,
+      boardSets: [makeBoardSet('A', [y4, y5, y6, y7Board, y8, y9, y10])],
+      players: gs.players.map((p: any, i: number) =>
+        i === 0 ? { ...p, handTiles: [y7Hand], handTileCount: 1 } : p),
+    };
+
+    const result = executeMoveBatch(gs, moves);
+    expect(result.boardSets.length).toBe(2);
+    for (const s of result.boardSets) {
+      expect(s.tiles.length).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('纯手牌创建 (no board changes)', () => {
+    const r3 = makeTile('r3', 'red', 3);
+    const r4 = makeTile('r4', 'red', 4);
+    const r5 = makeTile('r5', 'red', 5);
+
+    const snapshotBoard: any[] = [];
+    const currentBoard = [
+      makeBoardSet('new', [r3, r4, r5]),
+    ];
+
+    const moves = diffMoves(snapshotBoard, currentBoard);
+    expect(moves.length).toBe(1);
+    expect(moves[0].type).toBe('CREATE_SET');
+    expect((moves[0] as any).setId).toBe('new');
+  });
+
+  it('桌面无变化应返回空数组', () => {
+    const r3 = makeTile('r3', 'red', 3);
+    const r4 = makeTile('r4', 'red', 4);
+    const r5 = makeTile('r5', 'red', 5);
+
+    const board = [makeBoardSet('A', [r3, r4, r5])];
+    const moves = diffMoves(board, board);
+    expect(moves.length).toBe(0);
+  });
+});
+
+// ============================================================
+// 11. 计分测试
 // ============================================================
 describe('ScoreKeeper', () => {
   it('calculateScores 赢家获正分，其他玩家获负分', () => {

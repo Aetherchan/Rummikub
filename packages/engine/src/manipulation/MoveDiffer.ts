@@ -141,8 +141,15 @@ export function diffMoves(
       if (siblingCurrSets.length > 0) {
         // 同一快照被拆分为多个当前牌组 → SPLIT_SET
         // 计算拆分点：在快照牌组中的索引
+        // findIndex 返回第一个不在 currIds 中的牌 → 即拆分的边界
         const snapshotTiles = snapshotBoard.find(s => s.id === bestSnapshotId)!.tiles;
-        const splitIndex = snapshotTiles.findIndex(t => !currIds.has(t.instanceId));
+        let splitIndex = snapshotTiles.findIndex(t => !currIds.has(t.instanceId));
+        // 如果 splitIndex <= 0，说明当前牌组是拆分的尾部（tail），
+        // 即它不包含快照的第一张牌。此时从尾部视角重新计算：
+        // 找到当前牌组中第一张在快照中出现的牌，即尾部起始位置。
+        if (splitIndex <= 0) {
+          splitIndex = snapshotTiles.findIndex(t => currIds.has(t.instanceId));
+        }
         if (splitIndex > 0 && splitIndex < snapshotTiles.length) {
           for (const id of currIds) handledInstanceIds.add(id);
           for (const sib of siblingCurrSets) {
@@ -289,6 +296,17 @@ export function diffMoves(
         });
       }
     }
+  }
+
+  // 安全网：如果 ADD_TILES_TO_SET 引用的牌组在快照中不存在，
+  // 则该牌组是玩家在操纵过程中新建的，引擎执行时会报 SET_NOT_FOUND。
+  // 遇到这种情况直接使用回退策略（DISMISS + CREATE），确保正确性。
+  const snapshotSetIds = new Set(snapshotBoard.map(s => s.id));
+  const hasAddToNonExistentSet = moves.some(
+    m => m.type === 'ADD_TILES_TO_SET' && !snapshotSetIds.has((m as AddTilesMove).setId),
+  );
+  if (hasAddToNonExistentSet) {
+    return fallbackResetRecreate(snapshotBoard, currentBoard);
   }
 
   // 回退策略：如果 SPLIT 的源牌组也被其他走法引用，会产生冲突
