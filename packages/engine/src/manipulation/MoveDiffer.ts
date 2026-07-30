@@ -330,6 +330,20 @@ export function diffMoves(
     return fallbackResetRecreate(snapshotBoard, currentBoard);
   }
 
+  // 对走法排序：归还手牌的操作（DISMISS, REMOVE）必须在取走手牌的操作（ADD, CREATE）之前执行。
+  // 否则在"桌面牌移动到另一个牌组"的场景中，ADD 先执行时找不到手牌中的牌（牌还在桌面上），
+  // REMOVE 后执行却会把牌退回手牌 → 产生幻影手牌。
+  // 排序规则：归还操作 → 拆分/合并 → 取走操作
+  const MOVE_ORDER: Record<string, number> = {
+    DISMISS_SET: 0,
+    REMOVE_TILES_FROM_SET: 1,
+    SPLIT_SET: 2,
+    MERGE_SETS: 3,
+    ADD_TILES_TO_SET: 4,
+    CREATE_SET: 5,
+  };
+  moves.sort((a, b) => MOVE_ORDER[a.type] - MOVE_ORDER[b.type]);
+
   return moves;
 }
 

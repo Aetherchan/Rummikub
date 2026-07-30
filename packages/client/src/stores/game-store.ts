@@ -459,7 +459,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return;
     }
 
-    // 3. 检查是否有操作（没有操作则不允许提交）
+    // 3. 检查是否有打出牌（仅桌面移动不算有效出牌）
     const moves = diffMoves(
       turnSnapshot.boardSets,
       optimisticState.boardSets,
@@ -472,6 +472,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
         type: 'warning',
         message: '没有打出任何牌，请先操作牌组或选择摸牌/跳过',
         duration: 3000,
+      });
+      return;
+    }
+
+    // 棋盘上只移动了原有牌，没有从手牌打出新牌 → 不允许提交
+    // (Rummikub 规则：每回合必须至少从手牌打出一张牌，或者摸牌)
+    if (validation.scoreFromHand === 0) {
+      useToastStore.getState().toast({
+        type: 'warning',
+        message: '仅移动桌面牌组不能出牌，请至少从手牌打出一张牌，或选择摸牌',
+        duration: 4000,
       });
       return;
     }
