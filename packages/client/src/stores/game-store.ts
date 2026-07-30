@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   GameState, PlayerState, TileInstance,
   SetOnBoard, TurnPhase, PlayerId,
+  GameStateDiff, ScoreEntry, GameConfig,
 } from '@rummikub/shared';
 import {
   createDefaultConfig, createPlayerState, createGameState,
@@ -19,6 +20,8 @@ import { easyBotDecide, mediumBotDecide, hardBotDecide, generateMoveOptions } fr
 import type { BotDecision } from '../bot';
 
 // ---- 类型 ----
+
+export type P2PGameMode = { type: 'host'; hostRoom: any } | { type: 'guest'; clientRoom: any };
 
 interface LocalGameState {
   gameState: GameState | null;
@@ -38,6 +41,14 @@ interface LocalGameState {
     timeLimit: number;
     aiHintEnabled: boolean;
   };
+  /** P2P 模式 */
+  p2pMode: P2PGameMode | null;
+  /** P2P 主机房间引用 */
+  _hostRoom: any;
+  /** P2P 客户端房间引用 */
+  _clientRoom: any;
+  /** P2P 连接是否断开 */
+  p2pDisconnected: boolean;
 }
 
 interface GameActions {
@@ -59,6 +70,20 @@ interface GameActions {
   canCommit: () => boolean;
   canDraw: () => boolean;
   backToLobby: () => void;
+  // P2P 操作
+  setP2PMode: (mode: P2PGameMode | null) => void;
+  setHostRoom: (room: any) => void;
+  setClientRoom: (room: any) => void;
+  startP2PHostGame: () => void;
+  setP2PGuestState: (gameState: GameState, myIndex: number) => void;
+  receiveP2PHand: (tiles: TileInstance[]) => void;
+  receiveP2PStateUpdate: (diff: GameStateDiff) => void;
+  receiveP2PTurnChange: (playerIndex: number, phase: TurnPhase) => void;
+  receiveP2PGameOver: (winnerId: string, scores: ScoreEntry[]) => void;
+  sendP2PMove: (moves: AtomicMove[]) => void;
+  sendP2PDrawTile: () => void;
+  sendP2PPassTurn: () => void;
+  setP2PDisconnected: (v: boolean) => void;
 }
 
 export type GameStore = LocalGameState & GameActions;
@@ -75,6 +100,20 @@ function toggleInArray(arr: string[], id: string): string[] {
 function isE(result: unknown): result is GameError {
   return result instanceof GameError
     || (typeof result === 'object' && result !== null && 'code' in result && !('state' in result));
+}
+
+/** 如果是 P2P 主机模式，广播游戏状态给所有客户端 */
+function broadcastIfHost(state: GameState, hostRoom: any): void {
+  if (hostRoom && typeof hostRoom.broadcastGameState === 'function') {
+    hostRoom.broadcastGameState(state);
+    // 也广播回合变更
+    if (typeof hostRoom.broadcastTurnChange === 'function') {
+      hostRoom.broadcastTurnChange(
+        state.currentPlayerIndex,
+        state.turnPhase,
+      );
+    }
+  }
 }
 
 // ---- Store ----
@@ -97,6 +136,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     timeLimit: 120,
     aiHintEnabled: false,
   },
+  p2pMode: null,
+  _hostRoom: null,
+  _clientRoom: null,
+  p2pDisconnected: false,
 
   setPendingConfig: (partial) => set(s => ({
     pendingConfig: { ...s.pendingConfig, ...partial },
@@ -203,6 +246,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       timer: newTimer,
     });
 
+    broadcastIfHost(ns, get()._hostRoom);
+
     if (ns.phase !== 'GAME_OVER' && ns.players[ns.currentPlayerIndex]?.isBot) {
       setTimeout(() => get().botMove([]), 500);
     }
@@ -230,6 +275,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         selectedBoardIds: [],
         timer: startTimerFn(resetTimer(createTimer(ns.config.turnTimeLimitSeconds))),
       });
+      broadcastIfHost(ns, get()._hostRoom);
       return;
     }
 
@@ -262,6 +308,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       hintedTileIds: [],
       timer: startTimerFn(resetTimer(createTimer(ns.config.turnTimeLimitSeconds))),
     });
+
+    broadcastIfHost(ns, get()._hostRoom);
 
     if (ns.phase !== 'GAME_OVER' && ns.players[ns.currentPlayerIndex]?.isBot) {
       setTimeout(() => get().botMove([]), 500);
@@ -362,6 +410,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
             timer: startTimerFn(resetTimer(createTimer(ns.config.turnTimeLimitSeconds))),
           });
 
+          broadcastIfHost(ns, get()._hostRoom);
+
           if (ns.phase !== 'GAME_OVER' && ns.players[ns.currentPlayerIndex]?.isBot) {
             setTimeout(() => get().botMove([]), 800);
           }
@@ -387,6 +437,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         isBotThinking: false,
         timer: startTimerFn(resetTimer(createTimer(ns.config.turnTimeLimitSeconds))),
       });
+
+      broadcastIfHost(ns, get()._hostRoom);
 
       if (ns.phase !== 'GAME_OVER' && ns.players[ns.currentPlayerIndex]?.isBot) {
         setTimeout(() => get().botMove([]), 800);
@@ -461,15 +513,214 @@ export const useGameStore = create<GameStore>((set, get) => ({
     return os.turnPhase === 'ARRANGING' || os.turnPhase === 'DRAW_REQUIRED';
   },
 
-  backToLobby: () => set({
-    gameState: null,
-    optimisticState: null,
-    turnSnapshot: null,
-    timer: createTimer(120),
-    selectedHandIds: [],
-    selectedBoardIds: [],
-    hintedTileIds: [],
-    isComputingHint: false,
-    isBotThinking: false,
-  }),
+  // ---- P2P 操作 ----
+
+  setP2PMode: (mode) => set({ p2pMode: mode }),
+
+  setHostRoom: (room) => set({ _hostRoom: room }),
+
+  setClientRoom: (room) => set({ _clientRoom: room }),
+
+  startP2PHostGame: () => {
+    const { pendingConfig, _hostRoom } = get();
+    const hostRoom = _hostRoom;
+    if (!hostRoom) return;
+
+    const config = createDefaultConfig({
+      maxPlayers: pendingConfig.playerCount as 2 | 3 | 4,
+      turnTimeLimitSeconds: pendingConfig.timeLimit,
+      aiPlayers: pendingConfig.aiCount,
+      aiDifficulty: pendingConfig.aiDifficulty,
+    });
+
+    const roomPlayers = hostRoom.getPlayers() as any[];
+    const players: PlayerState[] = [];
+
+    // 为房间中的每个玩家创建 PlayerState
+    for (const info of roomPlayers) {
+      const isBot = false;
+      players.push(createPlayerState(info.id, info.name, isBot));
+    }
+
+    // 补充 AI 玩家
+    for (let i = 0; i < pendingConfig.aiCount; i++) {
+      const diffLabel = { easy: '简单', medium: '中等', hard: '困难' }[pendingConfig.aiDifficulty];
+      players.push(createPlayerState(`ai-p2p-${i}`, `AI-${diffLabel} #${i + 1}`, true));
+    }
+
+    const result = startGame(createGameState('p2p-game', players, config));
+    const state = result.state;
+    const snapshot = createSnapshot(state);
+    const timer = createTimer(pendingConfig.timeLimit);
+
+    set({
+      gameState: state,
+      optimisticState: state,
+      turnSnapshot: snapshot,
+      timer: startTimerFn(timer),
+      selectedHandIds: [],
+      selectedBoardIds: [],
+      hintedTileIds: [],
+      aiHintEnabled: false,
+      isBotThinking: false,
+      p2pMode: { type: 'host', hostRoom },
+    });
+
+    // 广播游戏状态给所有客户端
+    hostRoom.broadcastGameState(state);
+
+    // 如果当前是 AI 回合，触发 bot
+    if (state.players[state.currentPlayerIndex]?.isBot) {
+      setTimeout(() => get().botMove([]), 500);
+    }
+  },
+
+  setP2PGuestState: (gameState, myIndex) => {
+    // 在客户端隐藏其他玩家的手牌
+    const maskedPlayers = gameState.players.map((p, i) => {
+      if (i === myIndex) return p; // 自己的手牌可见
+      return { ...p, handTiles: [] }; // 对手手牌隐藏
+    });
+    const maskedState: GameState = { ...gameState, players: maskedPlayers };
+
+    const snapshot = createSnapshot(maskedState);
+    set({
+      gameState: maskedState,
+      optimisticState: maskedState,
+      turnSnapshot: snapshot,
+      selectedHandIds: [],
+      selectedBoardIds: [],
+      hintedTileIds: [],
+    });
+  },
+
+  receiveP2PHand: (tiles) => {
+    const os = get().optimisticState;
+    if (!os) return;
+    const myIdx = os.players.findIndex(p => !p.isBot);
+    if (myIdx < 0) return;
+    const newPlayers = [...os.players];
+    newPlayers[myIdx] = { ...newPlayers[myIdx], handTiles: tiles, handTileCount: tiles.length };
+    const newState: GameState = { ...os, players: newPlayers };
+    set({ gameState: newState, optimisticState: newState });
+  },
+
+  receiveP2PStateUpdate: (diff) => {
+    const os = get().optimisticState;
+    if (!os) return;
+
+    const newState: GameState = {
+      ...os,
+      currentPlayerIndex: diff.currentPlayerIndex,
+      turnPhase: diff.turnPhase,
+      poolTileCount: diff.poolTileCount,
+      lastMove: diff.lastMove ?? os.lastMove,
+    };
+
+    // 应用棋盘差异
+    if (diff.modifiedSets.length > 0 || diff.removedSetIds.length > 0 || diff.newSets.length > 0) {
+      let boardSets = [...newState.boardSets];
+
+      // 移除已删除的组合
+      if (diff.removedSetIds.length > 0) {
+        boardSets = boardSets.filter(s => !diff.removedSetIds.includes(s.id));
+      }
+
+      // 更新/替换修改的组合
+      if (diff.modifiedSets.length > 0) {
+        for (const modSet of diff.modifiedSets) {
+          const idx = boardSets.findIndex(s => s.id === modSet.id);
+          if (idx >= 0) {
+            boardSets[idx] = modSet;
+          } else {
+            boardSets.push(modSet);
+          }
+        }
+      }
+
+      // 添加新组合
+      if (diff.newSets.length > 0) {
+        boardSets.push(...diff.newSets);
+      }
+
+      newState.boardSets = boardSets;
+    }
+
+    if (diff.playerMelded) {
+      const player = newState.players.find(p => p.id === diff.playerMelded);
+      if (player) player.hasMelded = true;
+    }
+
+    if (diff.winner) {
+      newState.winner = diff.winner;
+    }
+
+    set({ gameState: newState, optimisticState: newState });
+  },
+
+  receiveP2PTurnChange: (playerIndex, phase) => {
+    const os = get().optimisticState;
+    if (!os) return;
+    const newState: GameState = {
+      ...os,
+      currentPlayerIndex: playerIndex,
+      turnPhase: phase,
+    };
+    set({ gameState: newState, optimisticState: newState });
+  },
+
+  receiveP2PGameOver: (winnerId, scores) => {
+    const os = get().gameState;
+    if (!os) return;
+    const newState: GameState = {
+      ...os,
+      phase: 'GAME_OVER',
+      winner: winnerId,
+    };
+    set({ gameState: newState, optimisticState: newState });
+  },
+
+  sendP2PMove: (moves) => {
+    const { _clientRoom } = get();
+    if (_clientRoom) {
+      _clientRoom.sendMove(moves);
+    }
+  },
+
+  sendP2PDrawTile: () => {
+    const { _clientRoom } = get();
+    if (_clientRoom) {
+      _clientRoom.sendDrawTile();
+    }
+  },
+
+  sendP2PPassTurn: () => {
+    const { _clientRoom } = get();
+    if (_clientRoom) {
+      _clientRoom.sendPassTurn();
+    }
+  },
+
+  setP2PDisconnected: (v) => set({ p2pDisconnected: v }),
+
+  backToLobby: () => {
+    const { _hostRoom, _clientRoom } = get();
+    if (_hostRoom) _hostRoom.closeRoom();
+    if (_clientRoom) _clientRoom.disconnect();
+    set({
+      gameState: null,
+      optimisticState: null,
+      turnSnapshot: null,
+      timer: createTimer(120),
+      selectedHandIds: [],
+      selectedBoardIds: [],
+      hintedTileIds: [],
+      isComputingHint: false,
+      isBotThinking: false,
+      p2pMode: null,
+      _hostRoom: null,
+      _clientRoom: null,
+      p2pDisconnected: false,
+    });
+  },
 }));

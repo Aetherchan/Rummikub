@@ -21,6 +21,7 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
   const aiHintEnabled = useGameStore(s => s.aiHintEnabled);
   const isComputingHint = useGameStore(s => s.isComputingHint);
   const isBotThinking = useGameStore(s => s.isBotThinking);
+  const p2pMode = useGameStore(s => s.p2pMode);
 
   const toggleHandTile = useGameStore(s => s.toggleHandTile);
   const toggleBoardTile = useGameStore(s => s.toggleBoardTile);
@@ -106,6 +107,19 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
           ← 大厅
         </button>
         <h1 className="text-yellow-300 font-bold">Rummikub</h1>
+
+        {/* P2P 状态指示 */}
+        {p2pMode && (
+          <span className={[
+            'text-xs px-2 py-0.5 rounded-full',
+            p2pMode.type === 'host'
+              ? 'bg-blue-600/50 text-blue-200'
+              : 'bg-purple-600/50 text-purple-200',
+          ].join(' ')}>
+            {p2pMode.type === 'host' ? '🏠 主机' : '🔗 已连接'}
+          </span>
+        )}
+
         <div className="flex-1" />
 
         {/* 所有玩家信息 */}

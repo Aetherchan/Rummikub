@@ -1,24 +1,49 @@
 import { useState } from 'react';
 import type { GameConfig } from '@rummikub/shared';
 import { TIME_LIMIT_OPTIONS } from '@rummikub/engine';
+import { useGameStore } from '../../stores/game-store';
 
 interface LobbyProps {
   onStartGame: () => void;
+  onBack?: () => void;
 }
 
-export default function Lobby({ onStartGame }: LobbyProps) {
+export default function Lobby({ onStartGame, onBack }: LobbyProps) {
+  const setPendingConfig = useGameStore(s => s.setPendingConfig);
+  const startSinglePlayerGame = useGameStore(s => s.startSinglePlayerGame);
+
   const [playerCount, setPlayerCount] = useState(2);
   const [aiCount, setAiCount] = useState(1);
   const [aiDifficulty, setAiDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy');
   const [timeLimit, setTimeLimit] = useState(120);
   const [aiHint, setAiHint] = useState(false);
 
+  const handleStart = () => {
+    setPendingConfig({
+      playerCount,
+      aiCount,
+      aiDifficulty,
+      timeLimit,
+      aiHintEnabled: aiHint,
+    });
+    startSinglePlayerGame();
+    onStartGame();
+  };
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4">
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="absolute top-4 left-4 text-green-300 hover:text-white transition text-sm"
+        >
+          ← 返回
+        </button>
+      )}
       <h1 className="text-5xl font-bold mb-2 text-yellow-300 drop-shadow-lg">
         🎴 Rummikub 拉密
       </h1>
-      <p className="text-green-300 mb-8 text-lg">以色列麻将 · 线上版</p>
+      <p className="text-green-300 mb-8 text-lg">以色列麻将 · 单人模式</p>
 
       <div className="bg-green-800/80 backdrop-blur rounded-2xl p-8 shadow-2xl w-full max-w-md space-y-5">
         <h2 className="text-2xl font-bold text-center text-white mb-4">游戏设置</h2>
@@ -126,7 +151,7 @@ export default function Lobby({ onStartGame }: LobbyProps) {
 
         {/* 开始按钮 */}
         <button
-          onClick={onStartGame}
+          onClick={handleStart}
           className="w-full py-3 mt-4 bg-yellow-500 hover:bg-yellow-400 text-green-900
                      font-bold text-xl rounded-xl transition shadow-lg"
         >
