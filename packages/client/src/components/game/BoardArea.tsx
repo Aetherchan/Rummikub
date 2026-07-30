@@ -9,6 +9,7 @@ interface BoardAreaProps {
   selectedTileIds: string[];
   invalidSetIds?: string[];
   onTileClick: (tile: TileOnBoard) => void;
+  onJokerEdit?: (tile: TileOnBoard) => void;
 }
 
 export default function BoardArea({
@@ -17,6 +18,7 @@ export default function BoardArea({
   selectedTileIds,
   invalidSetIds,
   onTileClick,
+  onJokerEdit,
 }: BoardAreaProps) {
   // 空白桌面区域作为拖放目标（拖牌到此创建新牌组）
   const { setNodeRef: emptyDropRef, isOver } = useDroppable({
@@ -45,6 +47,7 @@ export default function BoardArea({
             selectedTileIds={selectedTileIds}
             invalidSetIds={invalidSetIds}
             onTileClick={onTileClick}
+            onJokerEdit={onJokerEdit}
           />
         ))}
         {/* 空白拖放区域 */}

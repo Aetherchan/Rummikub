@@ -6,6 +6,7 @@ import {
   KeyboardSensor,
   useSensor,
   useSensors,
+  pointerWithin,
   closestCenter,
 } from '@dnd-kit/core';
 import type { DragStartEvent, DragEndEvent } from '@dnd-kit/core';
@@ -151,9 +152,6 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
     // 不是自己的回合 → 忽略
     if (!isMyTurn) return;
 
-    // 未破冰时不能操作桌面牌
-    if (!hasMelded && !isHandTile) return;
-
     if (isHandTile) {
       // 手牌拖出
       if (targetType === 'board-set' && targetSetId) {
@@ -250,6 +248,25 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
     setPendingJoker(null);
   };
 
+  /** 点击桌面上已有的 Joker 牌（编辑替代值） */
+  const handleBoardJokerEdit = (tile: TileOnBoard) => {
+    if (!isMyTurn) return;
+    // 找到该 Joker 所在的牌组
+    const os = useGameStore.getState().optimisticState;
+    if (!os) return;
+    for (const set of os.boardSets) {
+      const found = set.tiles.find(t => t.instanceId === tile.instanceId);
+      if (found) {
+        setPendingJoker({
+          instanceId: tile.instanceId,
+          tile,
+          action: () => {}, // 已在桌面上，无需额外操作
+        });
+        break;
+      }
+    }
+  };
+
   const handleCommit = () => {
     commitMove();
   };
@@ -262,7 +279,13 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={(args) => {
+        // 优先检测指针是否在 droppable 区域内
+        const pointerCollisions = pointerWithin(args);
+        if (pointerCollisions.length > 0) return pointerCollisions;
+        // 回退到最近的中心点检测
+        return closestCenter(args);
+      }}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
@@ -324,6 +347,7 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
           selectedTileIds={selectedBoardIds}
           invalidSetIds={invalidSetIds}
           onTileClick={(tile) => toggleBoardTile(tile.instanceId)}
+          onJokerEdit={handleBoardJokerEdit}
         />
 
         <div className="flex-1" />

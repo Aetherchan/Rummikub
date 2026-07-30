@@ -381,16 +381,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const cp = optimisticState.players[optimisticState.currentPlayerIndex];
     const hasMelded = cp.hasMelded;
 
-    // 1. 检查所有 Joker 都有替代值
+    // 1. 检查当前玩家新放下的 Joker 是否都有替代值
+    // （只检查本回合新增的 Joker，不检查回合开始时已在桌面上的 Joker）
+    const snapshotBoardInstanceIds = new Set<string>();
+    for (const set of turnSnapshot.boardSets) {
+      for (const tile of set.tiles) {
+        snapshotBoardInstanceIds.add(tile.instanceId);
+      }
+    }
+
     for (const set of optimisticState.boardSets) {
       for (const tile of set.tiles) {
-        if (isJoker(tile) && !(tile as TileOnBoard).jokerSubstitution) {
+        // 只检查本回合新放到桌面的 Joker（不在快照中的）
+        if (isJoker(tile)
+          && !snapshotBoardInstanceIds.has(tile.instanceId)
+          && !(tile as TileOnBoard).jokerSubstitution) {
           useToastStore.getState().toast({
             type: 'error',
             message: '百搭牌 (Joker) 需要设置替代值，请点击 Joker 牌设置',
             duration: 4000,
           });
-          // 标记该牌组为无效
           set({ invalidSetIds: [set.id] });
           return;
         }
@@ -521,16 +531,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   drawTileAction: () => {
-    const { optimisticState } = get();
-    if (!optimisticState) return;
+    const { gameState } = get();
+    if (!gameState) return;
 
-    const cp = optimisticState.players[optimisticState.currentPlayerIndex];
-    const result = drawTile(optimisticState, cp.id);
+    // 使用 gameState（最后提交的状态）而非 optimisticState，
+    // 这样摸牌时玩家未提交的桌面操作会被丢弃（摸牌 = 放弃出牌）。
+    const cp = gameState.players[gameState.currentPlayerIndex];
+    const result = drawTile(gameState, cp.id);
     if (isE(result)) return;
 
     if (!result.drawnTile) {
       // pool empty → auto pass
-      const pr = passTurn(optimisticState, cp.id);
+      const pr = passTurn(result.state, cp.id);
       if (isE(pr)) return;
       const ns = pr.state;
       const newSnapshot = createSnapshot(ns);

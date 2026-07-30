@@ -8,6 +8,7 @@ interface BoardSetProps {
   selectedTileIds: string[];
   invalidSetIds?: string[];
   onTileClick: (tile: TileOnBoard) => void;
+  onJokerEdit?: (tile: TileOnBoard) => void;
 }
 
 /** 可拖拽的桌面牌 */
@@ -17,12 +18,14 @@ function DraggableBoardTile({
   isSmall,
   selected,
   onClick,
+  onChangeSubstitution,
 }: {
   tile: TileOnBoard;
   setId: string;
   isSmall: boolean;
   selected: boolean;
   onClick: () => void;
+  onChangeSubstitution?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `board-${tile.instanceId}`,
@@ -42,6 +45,7 @@ function DraggableBoardTile({
         small={isSmall}
         selected={selected}
         onClick={onClick}
+        onChangeSubstitution={onChangeSubstitution}
       />
     </div>
   );
@@ -52,6 +56,7 @@ export default function BoardSetView({
   selectedTileIds,
   invalidSetIds,
   onTileClick,
+  onJokerEdit,
 }: BoardSetProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: `board-set-${set.id}`,
@@ -95,6 +100,7 @@ export default function BoardSetView({
             isSmall={sortedTiles.length > 6}
             selected={selectedTileIds.includes(tile.instanceId)}
             onClick={() => onTileClick(tile)}
+            onChangeSubstitution={onJokerEdit ? () => onJokerEdit(tile) : undefined}
           />
         ))}
       </div>
