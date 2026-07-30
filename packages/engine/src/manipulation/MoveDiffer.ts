@@ -309,6 +309,25 @@ export function diffMoves(
     return fallbackResetRecreate(snapshotBoard, currentBoard);
   }
 
+  // 回退策略：如果同一个快照牌组被多个"破坏性"操作引用（MERGE source、
+  // SPLIT source、DISMISS），执行时会因为牌组已被删除而失败。
+  // 典型场景：多组拆卸重组成多条顺子，每个新顺子都触发 MERGE 同一对祖先。
+  // 遇到这种情况直接使用回退策略，确保正确性。
+  const destructiveRefs = new Map<string, number>();
+  for (const m of moves) {
+    let refId: string | undefined;
+    if (m.type === 'MERGE_SETS') refId = (m as MergeSetsMove).sourceSetId;
+    else if (m.type === 'SPLIT_SET') refId = (m as SplitSetMove).sourceSetId;
+    else if (m.type === 'DISMISS_SET') refId = (m as DismissSetMove).setId;
+    if (refId) {
+      destructiveRefs.set(refId, (destructiveRefs.get(refId) ?? 0) + 1);
+    }
+  }
+  const hasDestructiveConflict = [...destructiveRefs.values()].some(count => count > 1);
+  if (hasDestructiveConflict) {
+    return fallbackResetRecreate(snapshotBoard, currentBoard);
+  }
+
   // 回退策略：如果 SPLIT 的源牌组也被其他走法引用，会产生冲突
   // （例如：REMOVE + SPLIT 对同一牌组，REMOVE 先减牌再 SPLIT 导致两部分都不足3张）
   const splitSourceIds = new Set(

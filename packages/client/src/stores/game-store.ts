@@ -521,14 +521,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (hasTimeLimit) {
         useToastStore.getState().toast({
           type: 'error',
-          message: '出牌无效！罚摸 3 张牌',
-          duration: 4000,
+          message: `出牌无效：${result.message}。罚摸 3 张牌`,
+          duration: 5000,
         });
       } else {
         useToastStore.getState().toast({
           type: 'error',
-          message: '出牌无效！已恢复回合开始状态',
-          duration: 3000,
+          message: `出牌无效：${result.message}。已恢复回合开始状态`,
+          duration: 5000,
         });
       }
 

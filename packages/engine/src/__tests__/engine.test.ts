@@ -771,6 +771,64 @@ describe('MoveDiffer', () => {
     const moves = diffMoves(board, board);
     expect(moves.length).toBe(0);
   });
+
+  it('多组拆卸重组为多条顺子 (transpose groups to runs)', () => {
+    // 模拟：3 个群组 → 3 条顺子（每个新顺子从每个群组取 1 张牌）
+    // 快照: Group A [红5,黄5,蓝5], Group B [红6,黄6,蓝6], Group C [红7,黄7,蓝7]
+    // 当前: Run 1 [红5,红6,红7], Run 2 [黄5,黄6,黄7], Run 3 [蓝5,蓝6,蓝7]
+    const r5 = makeTile('r5', 'red', 5);
+    const y5 = makeTile('y5', 'yellow', 5);
+    const b5 = makeTile('b5', 'blue', 5);
+    const r6 = makeTile('r6', 'red', 6);
+    const y6 = makeTile('y6', 'yellow', 6);
+    const b6 = makeTile('b6', 'blue', 6);
+    const r7 = makeTile('r7', 'red', 7);
+    const y7 = makeTile('y7', 'yellow', 7);
+    const b7 = makeTile('b7', 'blue', 7);
+
+    const snapshotBoard = [
+      makeBoardSet('GA', [r5, y5, b5]),
+      makeBoardSet('GB', [r6, y6, b6]),
+      makeBoardSet('GC', [r7, y7, b7]),
+    ];
+
+    const currentBoard = [
+      makeBoardSet('R1', [r5, r6, r7]),
+      makeBoardSet('R2', [y5, y6, y7]),
+      makeBoardSet('R3', [b5, b6, b7]),
+    ];
+
+    const moves = diffMoves(snapshotBoard, currentBoard);
+
+    // 应该回退到 DISMISS + CREATE（因为每个新顺子都触发 MERGE，导致重复操作）
+    // 验证走法可以正常执行不报错
+    expect(moves.length).toBeGreaterThan(0);
+
+    const state = createGameState('test', [
+      {
+        ...createPlayerState('p1', '玩家1'),
+        handTiles: [r5, y5, b5, r6, y6, b6, r7, y7, b7],
+        handTileCount: 9,
+        hasMelded: true,
+      },
+      { ...createPlayerState('p2', 'AI'), handTiles: [], handTileCount: 0 },
+    ], createDefaultConfig({ maxPlayers: 2 }));
+
+    let gs: any = { ...state, phase: 'IN_PROGRESS', turnPhase: 'ARRANGING', turnNumber: 1, poolTileCount: 80, _deck: [] };
+    // 先让 snapshot 牌组在桌面上
+    gs = executeAtomicMove(gs, { type: 'CREATE_SET', setId: 'GA', tiles: [r5, y5, b5] });
+    gs = executeAtomicMove(gs, { type: 'CREATE_SET', setId: 'GB', tiles: [r6, y6, b6] });
+    gs = executeAtomicMove(gs, { type: 'CREATE_SET', setId: 'GC', tiles: [r7, y7, b7] });
+
+    const result = executeMoveBatch(gs, moves);
+    // 执行后桌面应该有三个牌组（3 条顺子）
+    expect(result.boardSets.length).toBe(3);
+    for (const s of result.boardSets) {
+      expect(s.tiles.length).toBeGreaterThanOrEqual(3);
+    }
+    // 手牌应该为空（所有牌都在桌面上）
+    expect(result.players[0].handTiles.length).toBe(0);
+  });
 });
 
 // ============================================================
