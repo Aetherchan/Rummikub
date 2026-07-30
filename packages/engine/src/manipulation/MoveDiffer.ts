@@ -140,14 +140,14 @@ export function diffMoves(
 
       if (siblingCurrSets.length > 0) {
         // 同一快照被拆分为多个当前牌组 → SPLIT_SET
-        for (const id of currIds) handledInstanceIds.add(id);
-        for (const sib of siblingCurrSets) {
-          for (const id of currentSetTiles.get(sib.id)!) handledInstanceIds.add(id);
-        }
         // 计算拆分点：在快照牌组中的索引
         const snapshotTiles = snapshotBoard.find(s => s.id === bestSnapshotId)!.tiles;
         const splitIndex = snapshotTiles.findIndex(t => !currIds.has(t.instanceId));
-        if (splitIndex > 0) {
+        if (splitIndex > 0 && splitIndex < snapshotTiles.length) {
+          for (const id of currIds) handledInstanceIds.add(id);
+          for (const sib of siblingCurrSets) {
+            for (const id of currentSetTiles.get(sib.id)!) handledInstanceIds.add(id);
+          }
           const newSetId = siblingCurrSets[0]?.id ?? generateInstanceId();
           moves.push({
             type: 'SPLIT_SET',
@@ -155,8 +155,9 @@ export function diffMoves(
             atIndex: splitIndex,
             newSetId,
           });
+          continue;
         }
-        continue;
+        // splitIndex 无效（0 或超出范围）→ 回退到非标准重叠处理
       }
 
       // 非标准重叠 → 回退：移除变化部分 + 重新创建
@@ -287,6 +288,22 @@ export function diffMoves(
           tiles,
         });
       }
+    }
+  }
+
+  // 回退策略：如果 SPLIT 的源牌组也被其他走法引用，会产生冲突
+  // （例如：REMOVE + SPLIT 对同一牌组，REMOVE 先减牌再 SPLIT 导致两部分都不足3张）
+  const splitSourceIds = new Set(
+    moves.filter(m => m.type === 'SPLIT_SET').map(m => (m as SplitSetMove).sourceSetId),
+  );
+  if (splitSourceIds.size > 0) {
+    const hasConflict = moves.some(m => {
+      if (m.type === 'SPLIT_SET') return false;
+      const setId = (m as any).setId ?? (m as any).sourceSetId ?? (m as any).targetSetId;
+      return setId && splitSourceIds.has(setId);
+    });
+    if (hasConflict) {
+      return fallbackResetRecreate(snapshotBoard, currentBoard);
     }
   }
 
