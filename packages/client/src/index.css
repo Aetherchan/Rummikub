@@ -17,16 +17,20 @@
     min-width: 3rem;
   }
   .tile-red {
-    @apply bg-red-50 border-red-500 text-red-700;
+    @apply bg-red-500 border-red-700 text-white font-bold;
+    box-shadow: 0 2px 6px rgba(220, 38, 38, 0.4);
   }
   .tile-blue {
-    @apply bg-blue-50 border-blue-500 text-blue-700;
+    @apply bg-blue-500 border-blue-700 text-white font-bold;
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.4);
   }
   .tile-yellow {
-    @apply bg-yellow-50 border-yellow-500 text-yellow-700;
+    @apply bg-yellow-400 border-yellow-600 text-yellow-900 font-bold;
+    box-shadow: 0 2px 6px rgba(250, 204, 21, 0.4);
   }
   .tile-black {
-    @apply bg-gray-100 border-gray-800 text-gray-800;
+    @apply bg-gray-700 border-gray-900 text-white font-bold;
+    box-shadow: 0 2px 6px rgba(30, 41, 59, 0.4);
   }
   .tile-joker {
     @apply bg-gradient-to-br from-yellow-300 to-orange-400 border-orange-500 text-orange-800;
@@ -35,7 +39,8 @@
     @apply ring-4 ring-cyan-400 scale-110;
   }
   .tile-hint {
-    @apply ring-4 ring-green-400;
+    @apply ring-4 ring-purple-400 scale-105;
+    filter: brightness(1.3) drop-shadow(0 0 6px rgba(168, 85, 247, 0.7));
   }
   .board-set {
     @apply flex gap-1 p-2 rounded-lg border-2 border-dashed border-green-600/50

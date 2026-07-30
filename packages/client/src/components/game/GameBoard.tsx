@@ -88,8 +88,16 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
   };
 
   const handleCommit = () => {
-    // TODO: 从 selectedHandIds + selectedBoardIds 构建 AtomicMove[]
-    commitMove([]);
+    const hand = myHand.filter(t => selectedHandIds.includes(t.instanceId));
+    if (hand.length > 0) {
+      // 从选中的手牌构建 CREATE_SET 走法
+      const setId = `set-${Date.now()}`;
+      const moves = [{ type: 'CREATE_SET' as const, setId, tiles: hand }];
+      commitMove(moves);
+    } else {
+      // 无选中手牌 — 可能是在操作桌面牌组后确认
+      commitMove([]);
+    }
   };
 
   const handleBackToLobby = () => {

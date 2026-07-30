@@ -114,6 +114,15 @@ export function isValidRun(tiles: (TileInstance | TileOnBoard)[]): SetValidation
     return { valid: false, score, reason: 'Run 中至少需要一张非百搭牌' };
   }
 
+  // 检查非 joker 牌是否有重复数值（Run 中每张牌数值必须唯一）
+  const seenValues = new Set<number>();
+  for (const nj of sorted) {
+    if (seenValues.has(nj.value!)) {
+      return { valid: false, score, reason: `Run 中数值 ${nj.value} 重复（顺子每张牌数值必须唯一）` };
+    }
+    seenValues.add(nj.value!);
+  }
+
   const minValue = sorted[0].value!;
   const maxValue = sorted[sorted.length - 1].value!;
   const expectedLength = maxValue - minValue + 1;

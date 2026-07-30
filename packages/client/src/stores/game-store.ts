@@ -191,6 +191,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   toggleHandTile: (instanceId) => set(s => ({
     selectedHandIds: toggleInArray(s.selectedHandIds, instanceId),
+    hintedTileIds: [], // 点击牌时自动清除提示
   })),
 
   toggleBoardTile: (instanceId) => set(s => ({
@@ -276,20 +277,37 @@ export const useGameStore = create<GameStore>((set, get) => ({
         turnSnapshot: newSnapshot,
         selectedHandIds: [],
         selectedBoardIds: [],
+        hintedTileIds: [],
         timer: startTimerFn(resetTimer(createTimer(ns.config.turnTimeLimitSeconds))),
       });
       broadcastIfHost(ns, get()._hostRoom);
+
+      if (ns.phase !== 'GAME_OVER' && ns.players[ns.currentPlayerIndex]?.isBot) {
+        setTimeout(() => get().botMove([]), 500);
+      }
       return;
     }
 
-    // drawn, now in WAITING phase
-    const postState: GameState = { ...result.state, turnPhase: 'WAITING' } as any;
+    // 摸牌后自动跳过（摸牌总是结束回合）
+    const pr = passTurn(result.state, cp.id);
+    if (isE(pr)) return;
+    const ns = pr.state;
+    const newSnapshot = createSnapshot(ns);
     set({
-      gameState: result.state,
-      optimisticState: postState,
+      gameState: ns,
+      optimisticState: ns,
+      turnSnapshot: newSnapshot,
       selectedHandIds: [],
       selectedBoardIds: [],
+      hintedTileIds: [],
+      timer: startTimerFn(resetTimer(createTimer(ns.config.turnTimeLimitSeconds))),
     });
+
+    broadcastIfHost(ns, get()._hostRoom);
+
+    if (ns.phase !== 'GAME_OVER' && ns.players[ns.currentPlayerIndex]?.isBot) {
+      setTimeout(() => get().botMove([]), 500);
+    }
   },
 
   passTurnAction: () => {

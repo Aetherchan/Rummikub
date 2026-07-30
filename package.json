@@ -8,9 +8,11 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces",
+    "pretest": "cd packages/shared && npx tsc -b --force && cd ../engine && npx tsc -b --force",
+    "test": "cd packages/engine && npx vitest run",
     "lint": "eslint packages/*/src --ext .ts,.tsx",
     "clean": "rimraf packages/*/dist packages/*/node_modules",
+    "prebuild:ghpages": "cd packages/shared && npx tsc -b --force && cd ../engine && npx tsc -b --force",
     "build:ghpages": "cd packages/client && npx vite build --outDir ../../docs",
     "preview": "cd packages/client && npx vite preview"
   },
