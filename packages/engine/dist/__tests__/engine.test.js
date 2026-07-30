@@ -23,7 +23,13 @@ validateMoveBatch,
 // ScoreKeeper
 calculateScores, 
 // PhaseManager
-canTransition, isPlayerTurn, canCommitMove, } from '../index.js';
+canTransition, isPlayerTurn, canCommitMove, 
+// StateSnapshot
+createSnapshot, restoreSnapshot, 
+// TurnTimer
+createTimer, startTimer, tickTimer, isExpired, resetTimer, 
+// New GameState functions
+handleInvalidAttempt, } from '../index.js';
 // ============================================================
 // 1. 牌测试
 // ============================================================
@@ -634,6 +640,188 @@ describe('PhaseManager', () => {
             turnPhase: 'ARRANGING',
         };
         expect(canCommitMove(state)).toBe(true);
+    });
+});
+// ============================================================
+// 12. 状态快照/回滚测试
+// ============================================================
+describe('StateSnapshot', () => {
+    function createTestGame() {
+        const players = [
+            createPlayerState('p1', '玩家1'),
+            createPlayerState('p2', '玩家2'),
+        ];
+        const config = createDefaultConfig({ maxPlayers: 2 });
+        return createGameState('g1', players, config);
+    }
+    it('createSnapshot 应该创建完整深拷贝', () => {
+        const state = createTestGame();
+        const { state: gameState } = startGame(state);
+        const snapshot = createSnapshot(gameState);
+        expect(snapshot.players[0].handTiles.length).toBe(14);
+        expect(snapshot.players[0].handTiles.length).toBe(gameState.players[0].handTiles.length);
+    });
+    it('restoreSnapshot 应该恢复回合阶段为 ARRANGING', () => {
+        const state = createTestGame();
+        const { state: gameState } = startGame(state);
+        const snapshot = createSnapshot(gameState);
+        const restored = restoreSnapshot(snapshot);
+        expect(restored.turnPhase).toBe('ARRANGING');
+    });
+    it('快照修改不应影响原始状态', () => {
+        const state = createTestGame();
+        const { state: gameState } = startGame(state);
+        const snapshot = createSnapshot(gameState);
+        const modified = { ...snapshot, turnPhase: 'COMMITTING' };
+        expect(modified.turnPhase).toBe('COMMITTING');
+        expect(gameState.turnPhase).toBe('ARRANGING');
+    });
+});
+// ============================================================
+// 13. 计时器测试
+// ============================================================
+describe('TurnTimer', () => {
+    it('无限制计时器应为 isUnlimited', () => {
+        const timer = createTimer(0);
+        expect(timer.isUnlimited).toBe(true);
+        expect(timer.state).toBe('IDLE');
+    });
+    it('startTimer 应该启动计时器', () => {
+        const timer = createTimer(30);
+        const started = startTimer(timer);
+        expect(started.state).toBe('RUNNING');
+    });
+    it('tickTimer 应该减少剩余时间', () => {
+        const timer = createTimer(30);
+        const started = startTimer(timer);
+        const ticked = tickTimer(started, 5);
+        expect(ticked.secondsRemaining).toBe(25);
+    });
+    it('tickTimer 超时应标记为 EXPIRED', () => {
+        const timer = createTimer(5);
+        const started = startTimer(timer);
+        const ticked = tickTimer(started, 5);
+        expect(ticked.secondsRemaining).toBe(0);
+        expect(isExpired(ticked)).toBe(true);
+    });
+    it('resetTimer 应该重置计时器', () => {
+        const timer = createTimer(60);
+        const started = startTimer(timer);
+        const ticked = tickTimer(started, 20);
+        const reset = resetTimer(ticked);
+        expect(reset.secondsRemaining).toBe(60);
+        expect(reset.state).toBe('IDLE');
+    });
+});
+// ============================================================
+// 14. 罚摸和试错测试
+// ============================================================
+describe('Penalty & Trial', () => {
+    function createTestGame() {
+        const players = [
+            { ...createPlayerState('p1', '玩家1'), handTiles: [
+                    createTileInstance({ id: 'red-7', color: 'red', value: 7 }),
+                    createTileInstance({ id: 'blue-7', color: 'blue', value: 7 }),
+                    createTileInstance({ id: 'black-7', color: 'black', value: 7 }),
+                ], handTileCount: 3, hasMelded: true },
+            { ...createPlayerState('p2', '玩家2'), handTiles: [], handTileCount: 0 },
+        ];
+        const config = createDefaultConfig({ maxPlayers: 2 });
+        const state = {
+            ...createGameState('g1', players, config),
+            phase: 'IN_PROGRESS',
+            turnPhase: 'ARRANGING',
+            currentPlayerIndex: 0,
+            poolTileCount: 80,
+            turnNumber: 1,
+            _deck: [
+                createTileInstance({ id: 'red-1', color: 'red', value: 1 }),
+                createTileInstance({ id: 'red-2', color: 'red', value: 2 }),
+                createTileInstance({ id: 'red-3', color: 'red', value: 3 }),
+                createTileInstance({ id: 'red-4', color: 'red', value: 4 }),
+                createTileInstance({ id: 'red-5', color: 'red', value: 5 }),
+            ],
+            consecutivePasses: 0,
+        };
+        return state;
+    }
+    it('有时限时试错失败应罚摸 3 张牌', () => {
+        const state = createTestGame();
+        const snapshot = createSnapshot(state);
+        const handBefore = state.players[0].handTiles.length;
+        const result = handleInvalidAttempt(snapshot, true);
+        if (result instanceof Error)
+            throw result;
+        expect(result.state.players[0].handTiles.length).toBe(handBefore + 3);
+    });
+    it('无时限时试错失败不惩罚', () => {
+        const state = createTestGame();
+        const snapshot = createSnapshot(state);
+        const handBefore = state.players[0].handTiles.length;
+        const result = handleInvalidAttempt(snapshot, false);
+        if (result instanceof Error)
+            throw result;
+        expect(result.state.players[0].handTiles.length).toBe(handBefore);
+    });
+    it('试错失败后应推进回合', () => {
+        const state = createTestGame();
+        const snapshot = createSnapshot(state);
+        const result = handleInvalidAttempt(snapshot, true);
+        if (result instanceof Error)
+            throw result;
+        expect(result.state.currentPlayerIndex).not.toBe(state.currentPlayerIndex);
+    });
+});
+// ============================================================
+// 15. 牌池耗尽终局测试
+// ============================================================
+describe('Pool Exhaustion End-Game', () => {
+    it('牌池空 + 所有人连续跳过 → 游戏结束', () => {
+        const players = [
+            { ...createPlayerState('p1', '1'), handTiles: [createTileInstance({ id: 'red-7', color: 'red', value: 7 })], handTileCount: 1 },
+            { ...createPlayerState('p2', '2'), handTiles: [createTileInstance({ id: 'blue-3', color: 'blue', value: 3 })], handTileCount: 1 },
+        ];
+        const config = createDefaultConfig({ maxPlayers: 2 });
+        const state = {
+            ...createGameState('g1', players, config),
+            phase: 'IN_PROGRESS',
+            turnPhase: 'ARRANGING',
+            currentPlayerIndex: 1,
+            poolTileCount: 0,
+            turnNumber: 10,
+            _deck: [],
+            consecutivePasses: 1,
+        };
+        const result = passTurn(state, 'p2');
+        if (result instanceof Error)
+            throw result;
+        expect(result.state.phase).toBe('GAME_OVER');
+        expect(result.state.winner).toBeDefined();
+    });
+    it('牌池空 + 失分最少者获胜', () => {
+        const players = [
+            { ...createPlayerState('p1', '1'), handTiles: [
+                    createTileInstance({ id: 'red-13', color: 'red', value: 13 }),
+                    createTileInstance({ id: 'red-12', color: 'red', value: 12 }),
+                ], handTileCount: 2 },
+            { ...createPlayerState('p2', '2'), handTiles: [createTileInstance({ id: 'blue-1', color: 'blue', value: 1 })], handTileCount: 1 },
+        ];
+        const config = createDefaultConfig({ maxPlayers: 2 });
+        const state = {
+            ...createGameState('g1', players, config),
+            phase: 'IN_PROGRESS',
+            turnPhase: 'ARRANGING',
+            currentPlayerIndex: 0,
+            poolTileCount: 0,
+            turnNumber: 10,
+            _deck: [],
+            consecutivePasses: 1,
+        };
+        const result = passTurn(state, 'p1');
+        if (result instanceof Error)
+            throw result;
+        // p2 失分最少 (1 vs 25)，应为赢家
+        expect(result.state.winner).toBe('p2');
     });
 });
 //# sourceMappingURL=engine.test.js.map
