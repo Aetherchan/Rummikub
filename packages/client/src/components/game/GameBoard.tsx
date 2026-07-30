@@ -3,6 +3,7 @@ import { useGameStore } from '../../stores/game-store';
 import BoardArea from './BoardArea';
 import PlayerHand from '../hand/PlayerHand';
 import ActionBar from '../controls/ActionBar';
+import GameOverPanel from './GameOverPanel';
 import type { DragStartEvent, DragEndEvent } from '@dnd-kit/core';
 
 interface GameBoardProps {
@@ -189,6 +190,14 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
         onHint={requestHint}
         onSort={sortHand}
       />
+
+      {/* 游戏结束面板 */}
+      {optimisticState.phase === 'GAME_OVER' && (
+        <GameOverPanel
+          gameState={gameState}
+          onBackToLobby={handleBackToLobby}
+        />
+      )}
     </div>
   );
 }

@@ -49,6 +49,8 @@ interface LocalGameState {
   _clientRoom: any;
   /** P2P 连接是否断开 */
   p2pDisconnected: boolean;
+  /** 游戏结束时的最终得分（P2P 客户端可能没有完整手牌数据） */
+  finalScores: ScoreEntry[] | null;
 }
 
 interface GameActions {
@@ -140,6 +142,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   _hostRoom: null,
   _clientRoom: null,
   p2pDisconnected: false,
+  finalScores: null,
 
   setPendingConfig: (partial) => set(s => ({
     pendingConfig: { ...s.pendingConfig, ...partial },
@@ -677,7 +680,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       phase: 'GAME_OVER',
       winner: winnerId,
     };
-    set({ gameState: newState, optimisticState: newState });
+    set({ gameState: newState, optimisticState: newState, finalScores: scores });
   },
 
   sendP2PMove: (moves) => {
@@ -721,6 +724,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       _hostRoom: null,
       _clientRoom: null,
       p2pDisconnected: false,
+      finalScores: null,
     });
   },
 }));

@@ -33,5 +33,9 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
+    // GitHub Pages 构建输出到项目根 docs/
+    emptyOutDir: true,
   },
+  // GitHub Pages 子路径时使用 './'，自定义域名时使用 '/'
+  // base: './' 已在上方设置
 });
