@@ -11,7 +11,7 @@
     "test": "npm run test --workspaces",
     "lint": "eslint packages/*/src --ext .ts,.tsx",
     "clean": "rimraf packages/*/dist packages/*/node_modules",
-    "build:ghpages": "cd packages/client && npx tsc -b && npx vite build --outDir ../../docs",
+    "build:ghpages": "cd packages/client && npx vite build --outDir ../../docs",
     "preview": "cd packages/client && npx vite preview"
   },
   "devDependencies": {
