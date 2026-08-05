@@ -43,6 +43,8 @@ export default function JoinRoomView({ onConnected, onBack }: JoinRoomViewProps)
         setConnectionState('connected');
         // 设置 P2P guest 模式
         useGameStore.getState().setP2PMode({ type: 'guest', clientRoom: client });
+        // 通知 App 切换到游戏界面（显示加载中，等待主机开始游戏）
+        onConnected();
       },
       onDisconnected: () => {
         setError('与主机的连接已断开');
@@ -84,7 +86,7 @@ export default function JoinRoomView({ onConnected, onBack }: JoinRoomViewProps)
       setError(`连接失败: ${err.message}`);
       setState('idle');
     }
-  }, [hostPeerId, setP2PGuestState, receiveP2PHand, receiveP2PStateUpdate, receiveP2PTurnChange, receiveP2PGameOver]);
+  }, [hostPeerId, onConnected, setP2PGuestState, receiveP2PHand, receiveP2PStateUpdate, receiveP2PTurnChange, receiveP2PGameOver]);
 
   // 等待主机开始游戏
   const waitingForHost = state === 'connected';
