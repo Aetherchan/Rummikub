@@ -23,6 +23,7 @@ export default function JoinRoomView({ onConnected, onBack }: JoinRoomViewProps)
 
   const clientRoomRef = useRef<ClientRoom | null>(null);
   const [hostPeerId, setHostPeerId] = useState('');
+  const [playerName, setPlayerName] = useState('');
   const [state, setState] = useState<'idle' | 'connecting' | 'connected' | 'playing'>('idle');
   const [connectionState, setConnectionState] = useState<P2PConnectionState>('disconnected');
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +48,7 @@ export default function JoinRoomView({ onConnected, onBack }: JoinRoomViewProps)
         onConnected();
       },
       onDisconnected: () => {
+        useGameStore.getState().p2pRoomClosed('与主机的连接已断开');
         setError('与主机的连接已断开');
         setState('idle');
         setConnectionState('disconnected');
@@ -75,13 +77,19 @@ export default function JoinRoomView({ onConnected, onBack }: JoinRoomViewProps)
       onRoomInfo: (roomPlayers, _hostId) => {
         setPlayers(roomPlayers);
       },
+      onRoomClosed: (reason) => {
+        // 清理游戏状态
+        useGameStore.getState().p2pRoomClosed(reason);
+        setError(reason);
+        setState('idle');
+      },
     });
 
     clientRoomRef.current = client;
     setClientRoom(client);
 
     try {
-      await client.joinRoom(hostPeerId.trim());
+      await client.joinRoom(hostPeerId.trim(), playerName.trim() || undefined);
     } catch (err: any) {
       setError(`连接失败: ${err.message}`);
       setState('idle');
@@ -118,6 +126,19 @@ export default function JoinRoomView({ onConnected, onBack }: JoinRoomViewProps)
           <p className="text-green-200 text-sm">
             输入主机分享给你的 <strong>完整 Peer ID</strong> 来加入房间。
           </p>
+
+          <div>
+            <label className="block text-green-200 text-sm mb-1">你的昵称（留空自动分配）</label>
+            <input
+              type="text"
+              value={playerName}
+              onChange={e => setPlayerName(e.target.value)}
+              placeholder="留空自动命名"
+              maxLength={12}
+              className="w-full px-4 py-3 bg-green-700 border border-green-600 rounded-lg
+                         text-white placeholder-green-400 focus:outline-none focus:border-yellow-500"
+            />
+          </div>
 
           <div>
             <label className="block text-green-200 text-sm mb-1">主机 ID</label>

@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import type { GameConfig } from '@rummikub/shared';
 import { TIME_LIMIT_OPTIONS } from '@rummikub/engine';
 import { useGameStore } from '../../stores/game-store';
 
@@ -13,10 +12,12 @@ export default function Lobby({ onStartGame, onBack }: LobbyProps) {
   const startSinglePlayerGame = useGameStore(s => s.startSinglePlayerGame);
 
   const [playerCount, setPlayerCount] = useState(2);
-  const [aiCount, setAiCount] = useState(1);
-  const [aiDifficulty, setAiDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy');
-  const [timeLimit, setTimeLimit] = useState(120);
+  const [aiDifficulty, setAiDifficulty] = useState<'easy' | 'medium' | 'hard'>('hard');
+  const [timeLimit, setTimeLimit] = useState(0);
   const [aiHint, setAiHint] = useState(false);
+
+  // 单人模式：除自己外全是 AI
+  const aiCount = playerCount - 1;
 
   const handleStart = () => {
     setPendingConfig({
@@ -55,10 +56,7 @@ export default function Lobby({ onStartGame, onBack }: LobbyProps) {
             {[2, 3, 4].map(n => (
               <button
                 key={n}
-                onClick={() => {
-                  setPlayerCount(n);
-                  setAiCount(Math.min(aiCount, n - 1));
-                }}
+                onClick={() => setPlayerCount(n)}
                 className={`flex-1 py-2 rounded-lg font-bold transition ${
                   playerCount === n
                     ? 'bg-yellow-500 text-green-900'
@@ -71,46 +69,25 @@ export default function Lobby({ onStartGame, onBack }: LobbyProps) {
           </div>
         </div>
 
-        {/* AI 数量 */}
+        {/* AI 难度 */}
         <div>
-          <label className="block text-green-200 text-sm mb-1">
-            AI 机器人数量（{aiCount} 个）
-          </label>
-          <input
-            type="range"
-            min={0}
-            max={playerCount - 1}
-            value={aiCount}
-            onChange={e => setAiCount(Number(e.target.value))}
-            className="w-full accent-yellow-500"
-          />
-          <div className="flex justify-between text-xs text-green-400">
-            <span>0（纯真人）</span>
-            <span>{playerCount - 1}（满AI）</span>
+          <label className="block text-green-200 text-sm mb-1">AI 难度（{aiCount} 个机器人）</label>
+          <div className="flex gap-2">
+            {(['easy', 'medium', 'hard'] as const).map(d => (
+              <button
+                key={d}
+                onClick={() => setAiDifficulty(d)}
+                className={`flex-1 py-2 rounded-lg font-bold transition ${
+                  aiDifficulty === d
+                    ? 'bg-yellow-500 text-green-900'
+                    : 'bg-green-700 text-green-200 hover:bg-green-600'
+                }`}
+              >
+                {{ easy: '简单', medium: '中等', hard: '困难' }[d]}
+              </button>
+            ))}
           </div>
         </div>
-
-        {/* AI 难度 */}
-        {aiCount > 0 && (
-          <div>
-            <label className="block text-green-200 text-sm mb-1">AI 难度</label>
-            <div className="flex gap-2">
-              {(['easy', 'medium', 'hard'] as const).map(d => (
-                <button
-                  key={d}
-                  onClick={() => setAiDifficulty(d)}
-                  className={`flex-1 py-2 rounded-lg font-bold transition ${
-                    aiDifficulty === d
-                      ? 'bg-yellow-500 text-green-900'
-                      : 'bg-green-700 text-green-200 hover:bg-green-600'
-                  }`}
-                >
-                  {{ easy: '简单', medium: '中等', hard: '困难' }[d]}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* 时间限制 */}
         <div>

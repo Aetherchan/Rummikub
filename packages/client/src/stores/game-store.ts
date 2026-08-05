@@ -94,6 +94,7 @@ interface GameActions {
   sendP2PDrawTile: () => void;
   sendP2PPassTurn: () => void;
   setP2PDisconnected: (v: boolean) => void;
+  p2pRoomClosed: (reason: string) => void;
   // 本地操作（直接修改 optimisticState，提交时用 diff 生成 AtomicMove）
   moveTileFromHandToNewSet: (instanceId: string) => void;
   moveTileFromHandToSet: (instanceId: string, targetSetId: string) => void;
@@ -162,8 +163,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   pendingConfig: {
     playerCount: 2,
     aiCount: 1,
-    aiDifficulty: 'easy',
-    timeLimit: 120,
+    aiDifficulty: 'hard',
+    timeLimit: 0,
     aiHintEnabled: false,
   },
   p2pMode: null,
@@ -1027,10 +1028,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const maskedState: GameState = { ...gameState, players: maskedPlayers };
 
     const snapshot = createSnapshot(maskedState);
+    // 根据主机配置初始化计时器（修复 Guest 始终显示 120s 的问题）
+    const timer = createTimer(gameState.config.turnTimeLimitSeconds);
     set({
       gameState: maskedState,
       optimisticState: maskedState,
       turnSnapshot: snapshot,
+      timer: startTimerFn(timer),
       selectedHandIds: [],
       selectedBoardIds: [],
       hintedTileIds: [],
@@ -1110,7 +1114,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       currentPlayerIndex: playerIndex,
       turnPhase: phase,
     };
-    set({ gameState: newState, optimisticState: newState });
+    // 重置计时器（修复 Guest 计时器不随回合重置的问题）
+    const newTimer = startTimerFn(resetTimer(createTimer(os.config.turnTimeLimitSeconds)));
+    set({ gameState: newState, optimisticState: newState, timer: newTimer });
   },
 
   receiveP2PGameOver: (winnerId, scores) => {
@@ -1146,6 +1152,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   setP2PDisconnected: (v) => set({ p2pDisconnected: v }),
+
+  /** P2P 房间被解散（有玩家离开） */
+  p2pRoomClosed: (reason: string) => {
+    const { _hostRoom, _clientRoom } = get();
+    if (_hostRoom) _hostRoom.closeRoom();
+    if (_clientRoom) _clientRoom.disconnect();
+    set({
+      gameState: null,
+      optimisticState: null,
+      turnSnapshot: null,
+      timer: createTimer(120),
+      selectedHandIds: [],
+      selectedBoardIds: [],
+      hintedTileIds: [],
+      isComputingHint: false,
+      isBotThinking: false,
+      p2pMode: null,
+      _hostRoom: null,
+      _clientRoom: null,
+      p2pDisconnected: false,
+      finalScores: null,
+    });
+  },
 
   backToLobby: () => {
     const { _hostRoom, _clientRoom } = get();

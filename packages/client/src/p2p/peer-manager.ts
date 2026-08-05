@@ -131,7 +131,7 @@ export class PeerManager {
   }
 
   /** 客户端：连接到主机 */
-  connectToHost(hostPeerId: string): Promise<DataConnection> {
+  connectToHost(hostPeerId: string, metadata?: Record<string, unknown>): Promise<DataConnection> {
     if (!this.peer) {
       return Promise.reject(new Error('Peer not initialized. Call createPeer() first.'));
     }
@@ -141,6 +141,7 @@ export class PeerManager {
 
       const conn = this.peer!.connect(hostPeerId, {
         reliable: true,
+        metadata,
       });
 
       conn.on('open', () => {

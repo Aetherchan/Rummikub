@@ -13,8 +13,7 @@ import { PeerManager, generateRoomCode } from './peer-manager';
 import type { HostMessage, ClientMessage, PeerConnectionInfo, P2PConnectionState } from './types';
 import type { DataConnection } from 'peerjs';
 import { generateInstanceId, createPlayerState } from '@rummikub/engine';
-import type { GameState, PlayerInfo, GameConfig } from '@rummikub/shared';
-import { RECONNECT_WINDOW_MS } from './types';
+import type { GameState, PlayerInfo } from '@rummikub/shared';
 
 // ---- 回调 ----
 
@@ -33,6 +32,8 @@ export interface HostRoomCallbacks {
   onClientDraw?: (playerId: string) => void;
   /** 收到客户端跳过请求 */
   onClientPass?: (playerId: string) => void;
+  /** 房间被解散（有玩家离开） */
+  onRoomClosed?: (reason: string) => void;
   /** 错误 */
   onError?: (error: Error) => void;
 }
@@ -51,6 +52,10 @@ export class HostRoom {
   private _lastGameState: GameState | null = null;
   /** 被机器人接管的玩家 peerId → 机器人 playerId */
   private _botTakeovers: Map<string, string> = new Map();
+  /** 玩家编号计数器（用于自动命名） */
+  private _playerNumberCounter: number = 1;
+  /** 房间是否已解散（防止重复触发 onRoomClosed） */
+  private _isClosed: boolean = false;
 
   constructor(callbacks: HostRoomCallbacks = {}) {
     this.callbacks = callbacks;
@@ -89,14 +94,19 @@ export class HostRoom {
     return Array.from(this._players.values());
   }
 
-  /** 添加主机玩家 */
-  addHostPlayer(player: PlayerInfo): void {
+  /** 添加主机玩家。name 为空则使用 "玩家1" */
+  addHostPlayer(player: PlayerInfo, displayName?: string): void {
+    const key = this.manager.peerId ?? 'host';
+    // 如果已存在则只更新名字（避免重复递增计数器）
+    const existing = this._players.get(key);
+    const name = displayName?.trim() || (existing?.name) || `玩家${this._playerNumberCounter++}`;
     this._hostPlayerId = player.id;
-    this._players.set(this.manager.peerId ?? 'host', player);
-    this._connections.set(this.manager.peerId ?? 'host', {
-      peerId: this.manager.peerId ?? 'host',
+    const namedPlayer: PlayerInfo = { ...player, name };
+    this._players.set(key, namedPlayer);
+    this._connections.set(key, {
+      peerId: key,
       playerId: player.id,
-      playerName: player.name,
+      playerName: name,
       connection: null,
       state: 'connected',
     });
@@ -248,11 +258,15 @@ export class HostRoom {
       return;
     }
 
-    // 全新连接
+    // 全新连接 — 从 metadata 读取玩家自定义名称
+    const metadata = (conn as any).metadata as { playerName?: string } | undefined;
+    const customName = metadata?.playerName?.trim();
     const playerId = generateInstanceId();
+    // 自动命名：自定义名称 > "玩家N"
+    const name = customName || `玩家${this._playerNumberCounter++}`;
     const playerInfo: PlayerInfo = {
       id: playerId,
-      name: `玩家`,
+      name,
       isBot: false,
       seat: this._players.size,
     };
@@ -261,7 +275,7 @@ export class HostRoom {
     this._connections.set(clientId, {
       peerId: clientId,
       playerId,
-      playerName: playerInfo.name,
+      playerName: name,
       connection: conn,
       state: 'connected',
     });
@@ -274,32 +288,26 @@ export class HostRoom {
     });
 
     this.callbacks.onPlayerJoined?.(playerInfo);
+    // 广播更新后的房间信息给所有玩家
+    this.broadcastRoomInfo();
     this.emitConnectionState(this.manager.state);
   }
 
   private handleDisconnection(clientId: string): void {
-    const conn = this._connections.get(clientId);
-    if (conn) {
-      conn.state = 'disconnected';
-      conn.disconnectedAt = Date.now();
-    }
+    // 防止重复触发（关闭多个连接时会多次进入）
+    if (this._isClosed) return;
+    this._isClosed = true;
 
-    // 启动重连计时器
-    setTimeout(() => {
-      const info = this._connections.get(clientId);
-      if (info && info.state === 'disconnected') {
-        // 超过重连窗口，正式移除
-        const player = this._players.get(clientId);
-        if (player) {
-          this.callbacks.onPlayerLeft?.(player.id);
-        }
-        this._players.delete(clientId);
-        this._connections.delete(clientId);
-        this.broadcastRoomInfo();
-      }
-    }, RECONNECT_WINDOW_MS);
+    const player = this._players.get(clientId);
+    const playerName = player?.name || '未知玩家';
 
-    // 通知 UI 连接状态变更（但不移除玩家，保留重连机会）
+    // 通知所有剩余玩家房间已解散
+    const msg: HostMessage = { type: 'room_closed', reason: `${playerName} 离开了房间` };
+    this.manager.broadcast(msg);
+
+    // 通知主机 UI
+    this.callbacks.onRoomClosed?.(`${playerName} 离开了房间，房间已解散`);
+
     this.emitConnectionState(this.manager.state);
   }
 

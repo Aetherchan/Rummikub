@@ -22,6 +22,8 @@ export type HostMessage =
   | { type: 'turn_changed'; playerIndex: number; phase: TurnPhase }
   | { type: 'game_over'; winnerId: string; scores: ScoreEntry[] }
   | { type: 'room_info'; players: PlayerInfo[]; hostId: string }
+  | { type: 'player_left'; playerName: string; reason: string }
+  | { type: 'room_closed'; reason: string }
   | { type: 'error'; message: string };
 
 // ---- Guest → Host ----

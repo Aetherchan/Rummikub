@@ -35,6 +35,8 @@ export interface ClientRoomCallbacks {
   onGameOver?: (winnerId: string, scores: ScoreEntry[]) => void;
   /** 房间信息更新 */
   onRoomInfo?: (players: PlayerInfo[], hostId: string) => void;
+  /** 房间被解散 */
+  onRoomClosed?: (reason: string) => void;
   /** 错误 */
   onError?: (error: Error | string) => void;
 }
@@ -73,14 +75,14 @@ export class ClientRoom {
    *  简化方案：主机把完整的 peerId 作为 "房间码" 发送给客户端。
    *  对于短码，使用 PeerJS 的 connect 通过已知 peerId 连接。
    */
-  async joinRoom(hostPeerId: string): Promise<void> {
+  async joinRoom(hostPeerId: string, playerName?: string): Promise<void> {
     this._hostPeerId = hostPeerId;
 
     // 客户端创建自己的 Peer
     await this.manager.createPeer();
 
-    // 连接到主机
-    const conn = await this.manager.connectToHost(hostPeerId);
+    // 连接到主机（通过 metadata 传递玩家名称）
+    const conn = await this.manager.connectToHost(hostPeerId, { playerName: playerName || '' });
     this.callbacks.onConnected?.(hostPeerId);
   }
 
@@ -173,6 +175,14 @@ export class ClientRoom {
 
       case 'room_info':
         this.callbacks.onRoomInfo?.(msg.players, msg.hostId);
+        break;
+
+      case 'player_left':
+        this.callbacks.onRoomClosed?.(`${msg.playerName} 离开了房间，房间已解散`);
+        break;
+
+      case 'room_closed':
+        this.callbacks.onRoomClosed?.(msg.reason);
         break;
 
       case 'error':

@@ -33,6 +33,7 @@ export default function HostRoomView({ onStartGame, onBack }: HostRoomViewProps)
   const [aiCount, setAiCount] = useState(0);
   const [aiDifficulty, setAiDifficulty] = useState<'easy' | 'medium' | 'hard'>('easy');
   const [timeLimit, setTimeLimit] = useState(120);
+  const [hostName, setHostName] = useState('玩家1');
 
   // 创建房间
   useEffect(() => {
@@ -77,6 +78,13 @@ export default function HostRoomView({ onStartGame, onBack }: HostRoomViewProps)
         if (cp?.id !== playerId) return;
         s.passTurnAction();
       },
+      onRoomClosed: (reason) => {
+        setError(reason);
+        // 清理游戏状态
+        useGameStore.getState().p2pRoomClosed(reason);
+        // 自动返回大厅
+        setTimeout(() => onBack(), 1500);
+      },
       onError: (err) => {
         setError(err.message);
       },
@@ -106,7 +114,7 @@ export default function HostRoomView({ onStartGame, onBack }: HostRoomViewProps)
       isBot: false,
       seat: 0,
     };
-    hostRoomRef.current.addHostPlayer(hostPlayer);
+    hostRoomRef.current.addHostPlayer(hostPlayer, hostName);
     setConnectedPlayers(prev => [hostPlayer, ...prev]);
   }, [peerId]);
 
@@ -208,6 +216,20 @@ export default function HostRoomView({ onStartGame, onBack }: HostRoomViewProps)
             ))}
           </ul>
         )}
+      </div>
+
+      {/* 玩家昵称 */}
+      <div className="bg-green-800/80 rounded-2xl p-6 mb-6 w-full max-w-md">
+        <label className="block text-green-200 text-sm mb-1">你的昵称</label>
+        <input
+          type="text"
+          value={hostName}
+          onChange={e => setHostName(e.target.value)}
+          placeholder="玩家1"
+          maxLength={12}
+          className="w-full px-4 py-3 bg-green-700 border border-green-600 rounded-lg
+                     text-white placeholder-green-400 focus:outline-none focus:border-yellow-500"
+        />
       </div>
 
       {/* 游戏配置 */}
