@@ -114,6 +114,7 @@ export class PeerManager {
 
     this.peer.on('connection', (conn: DataConnection) => {
       this.setupConnection(conn, conn.peer);
+      this.connections.set(conn.peer, conn);
       this.callbacks.onConnection?.(conn, conn.peer);
     });
   }
