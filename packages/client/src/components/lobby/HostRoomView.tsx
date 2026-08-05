@@ -20,6 +20,7 @@ export default function HostRoomView({ onStartGame, onBack }: HostRoomViewProps)
   const startP2PHostGame = useGameStore(s => s.startP2PHostGame);
 
   const hostRoomRef = useRef<HostRoom | null>(null);
+  const isStartingGameRef = useRef(false); // 防止启动游戏时清理房间
   const [roomCode, setRoomCode] = useState('');
   const [peerId, setPeerId] = useState('');
   const [connectedPlayers, setConnectedPlayers] = useState<PlayerInfo[]>([]);
@@ -89,8 +90,10 @@ export default function HostRoomView({ onStartGame, onBack }: HostRoomViewProps)
     });
 
     return () => {
-      // 如果用户离开页面，关闭房间
-      host.closeRoom();
+      // 仅在未开始游戏时关闭房间（游戏过程中由 store 的 backToLobby 管理生命周期）
+      if (!isStartingGameRef.current) {
+        host.closeRoom();
+      }
     };
   }, [setHostRoom]);
 
@@ -120,6 +123,7 @@ export default function HostRoomView({ onStartGame, onBack }: HostRoomViewProps)
 
   // 开始游戏
   const handleStartGame = useCallback(() => {
+    isStartingGameRef.current = true; // 防止组件卸载时清理房间
     setPendingConfig({
       playerCount,
       aiCount,
