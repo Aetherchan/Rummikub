@@ -47,6 +47,7 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
   const isComputingHint = useGameStore(s => s.isComputingHint);
   const isBotThinking = useGameStore(s => s.isBotThinking);
   const p2pMode = useGameStore(s => s.p2pMode);
+  const isWaitingForHost = useGameStore(s => s.isWaitingForHost);
 
   const toggleHandTile = useGameStore(s => s.toggleHandTile);
   const toggleBoardTile = useGameStore(s => s.toggleBoardTile);
@@ -116,10 +117,31 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
 
   const isMyTurn = (() => {
     const cp = optimisticState.players[optimisticState.currentPlayerIndex];
-    return cp && !cp.isBot;
+    if (!cp || cp.isBot) return false;
+    // P2P Guest: 只有当前轮到自己时才能操作
+    if (p2pMode?.type === 'guest') {
+      const clientRoom = useGameStore.getState()._clientRoom;
+      if (clientRoom) {
+        const myIdx = clientRoom.getMyPlayerIndex();
+        return optimisticState.currentPlayerIndex === myIdx;
+      }
+      return false;
+    }
+    // Host/单机: 当前玩家非 Bot 即可操作
+    return true;
   })();
 
-  const humanPlayer = optimisticState.players.find(p => !p.isBot);
+  // P2P Guest: 通过 myPlayerIndex 定位自己；Host/单机: 第一个非 Bot 玩家
+  const humanPlayer = (() => {
+    if (p2pMode?.type === 'guest') {
+      const clientRoom = useGameStore.getState()._clientRoom;
+      if (clientRoom) {
+        const myIdx = clientRoom.getMyPlayerIndex();
+        return optimisticState.players[myIdx] ?? null;
+      }
+    }
+    return optimisticState.players.find(p => !p.isBot) ?? null;
+  })();
   const currentPlayer = optimisticState.players[optimisticState.currentPlayerIndex];
   const myHand = humanPlayer ? humanPlayer.handTiles : [];
   const hasMelded = humanPlayer ? humanPlayer.hasMelded : false;
@@ -309,6 +331,12 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
                 : 'bg-purple-600/50 text-purple-200',
             ].join(' ')}>
               {p2pMode.type === 'host' ? '🏠 主机' : '🔗 已连接'}
+            </span>
+          )}
+          {/* Guest 等待 Host 响应 */}
+          {isWaitingForHost && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-600/50 text-yellow-200 animate-pulse">
+              ⏳ 等待主机...
             </span>
           )}
 

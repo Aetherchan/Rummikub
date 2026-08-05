@@ -53,6 +53,9 @@ export class ClientRoom {
 
     this.manager = new PeerManager({
       onData: (data, fromId) => this.handleData(data, fromId),
+      onDisconnection: (_clientId) => {
+        this.callbacks.onDisconnected?.();
+      },
       onReady: () => {}, // 客户端不关心 ready，在 connect 中处理
       onError: (err) => this.callbacks.onError?.(err),
       onStateChange: (state) => this.callbacks.onStateChange?.(state),

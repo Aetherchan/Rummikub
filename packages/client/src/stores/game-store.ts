@@ -57,6 +57,8 @@ interface LocalGameState {
   finalScores: ScoreEntry[] | null;
   /** 提交验证失败时的牌组 ID 列表（用于 UI 高亮） */
   invalidSetIds: string[];
+  /** Guest 已发送走法，等待 Host 响应 */
+  isWaitingForHost: boolean;
 }
 
 interface GameActions {
@@ -64,7 +66,7 @@ interface GameActions {
   startSinglePlayerGame: () => void;
   toggleHandTile: (instanceId: string) => void;
   toggleBoardTile: (instanceId: string) => void;
-  commitMove: (moves: AtomicMove[]) => void;
+  commitMove: (remoteMoves?: AtomicMove[]) => void;
   drawTileAction: () => void;
   passTurnAction: () => void;
   resetAttempt: () => void;
@@ -170,6 +172,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   p2pDisconnected: false,
   finalScores: null,
   invalidSetIds: [],
+  isWaitingForHost: false,
 
   setPendingConfig: (partial) => set(s => ({
     pendingConfig: { ...s.pendingConfig, ...partial },
@@ -389,27 +392,96 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
-  // ---- 提交走法（重写版：本地验证 + Diff 生成 AtomicMove） ----
+  // ---- 提交走法（三路径：远程/guest/本地） ----
 
-  commitMove: () => {
-    const { optimisticState, turnSnapshot, gameState } = get();
+  /**
+   * 提交走法。
+   * - remoteMoves 提供时：Host 处理 Guest 发来的走法（跳过本地 diff，直接应用）
+   * - p2pMode === 'guest' 时：生成走法 → 发送给 Host（不本地执行引擎）
+   * - 否则（Host/单机）：本地 diff → 引擎验证 → 广播
+   */
+  commitMove: (remoteMoves?: AtomicMove[]) => {
+    const { optimisticState, turnSnapshot, gameState, p2pMode } = get();
     if (!optimisticState || !turnSnapshot || !gameState) return;
 
     const cp = optimisticState.players[optimisticState.currentPlayerIndex];
+
+    // ---- 路径 A：Host 处理远程 Guest 走法 ----
+    if (remoteMoves && remoteMoves.length > 0) {
+      const batch: MoveBatch = {
+        moveId: generateInstanceId(),
+        playerId: cp.id,
+        moves: remoteMoves,
+      };
+
+      const result = applyMove(gameState, batch);
+      if (isE(result)) {
+        // 走法不合法 → 通知该 Guest 并恢复（不罚摸，因为 Guest 已做本地验证）
+        const recovery = handleInvalidAttempt(turnSnapshot, false);
+        const ns = recovery.state;
+        const newSnapshot = createSnapshot(ns);
+        set({
+          gameState: ns,
+          optimisticState: ns,
+          turnSnapshot: newSnapshot,
+          selectedHandIds: [],
+          selectedBoardIds: [],
+          hintedTileIds: [],
+          invalidSetIds: [],
+          timer: createTimer(ns.config.turnTimeLimitSeconds),
+        });
+        // 向 Guest 发送错误（HostRoomView 的 onClientMove 持有 host ref，
+        // 这里通过 _hostRoom 发错误消息）
+        const hostRoom = get()._hostRoom;
+        if (hostRoom) {
+          // 找到发送者的 peerId
+          // 由于 store 没有直接的 peerId→playerId 映射，通过 hostRoom 广播错误状态
+          // 实际做法：广播 full_state 让所有客户端同步到正确状态
+          hostRoom.broadcastGameState(ns);
+        }
+        useToastStore.getState().toast({
+          type: 'error',
+          message: `玩家走法无效：${result.message}`,
+          duration: 4000,
+        });
+        return;
+      }
+
+      // 成功 → 广播
+      const ns = result.state;
+      const newSnapshot = createSnapshot(ns);
+      const newTimer = startTimerFn(resetTimer(createTimer(ns.config.turnTimeLimitSeconds)));
+      set({
+        gameState: ns,
+        optimisticState: ns,
+        turnSnapshot: newSnapshot,
+        selectedHandIds: [],
+        selectedBoardIds: [],
+        hintedTileIds: [],
+        invalidSetIds: [],
+        timer: newTimer,
+      });
+      broadcastIfHost(ns, get()._hostRoom);
+      if (ns.phase !== 'GAME_OVER' && ns.players[ns.currentPlayerIndex]?.isBot) {
+        setTimeout(() => get().botMove([]), 500);
+      }
+      return;
+    }
+
+    // ---- 本地验证（Guest 和 Host/单机共用） ----
+
     const hasMelded = cp.hasMelded;
 
     // 1. 检查当前玩家新放下的 Joker 是否都有替代值
-    // （只检查本回合新增的 Joker，不检查回合开始时已在桌面上的 Joker）
     const snapshotBoardInstanceIds = new Set<string>();
-    for (const set of turnSnapshot.boardSets) {
-      for (const tile of set.tiles) {
+    for (const ss of turnSnapshot.boardSets) {
+      for (const tile of ss.tiles) {
         snapshotBoardInstanceIds.add(tile.instanceId);
       }
     }
 
-    for (const set of optimisticState.boardSets) {
-      for (const tile of set.tiles) {
-        // 只检查本回合新放到桌面的 Joker（不在快照中的）
+    for (const boardSet of optimisticState.boardSets) {
+      for (const tile of boardSet.tiles) {
         if (isJoker(tile)
           && !snapshotBoardInstanceIds.has(tile.instanceId)
           && !(tile as TileOnBoard).jokerSubstitution) {
@@ -418,7 +490,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
             message: '百搭牌 (Joker) 需要设置替代值，请点击 Joker 牌设置',
             duration: 4000,
           });
-          set({ invalidSetIds: [set.id] });
+          set({ invalidSetIds: [boardSet.id] });
           return;
         }
       }
@@ -433,14 +505,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     );
 
     if (!validation.valid) {
-      // 显示错误 toast
       const firstError = validation.errors[0] ?? '牌组不合法';
       useToastStore.getState().toast({
         type: 'error',
         message: `出牌无效: ${firstError}`,
         duration: 5000,
       });
-      // 高亮无效牌组
       const invalidIds = validation.setResults
         .filter(r => !r.valid)
         .map(r => r.setId);
@@ -459,7 +529,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return;
     }
 
-    // 3. 检查是否有打出牌（仅桌面移动不算有效出牌）
+    // 3. 生成走法
     const moves = diffMoves(
       turnSnapshot.boardSets,
       optimisticState.boardSets,
@@ -476,8 +546,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return;
     }
 
-    // 棋盘上只移动了原有牌，没有从手牌打出新牌 → 不允许提交
-    // (Rummikub 规则：每回合必须至少从手牌打出一张牌，或者摸牌)
     if (validation.scoreFromHand === 0) {
       useToastStore.getState().toast({
         type: 'warning',
@@ -487,16 +555,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return;
     }
 
-    // 4. 提交到引擎验证
+    // ---- 路径 B：Guest 模式 — 发送走法给 Host，不本地执行 ----
+    if (p2pMode?.type === 'guest') {
+      get().sendP2PMove(moves);
+      useToastStore.getState().toast({
+        type: 'info',
+        message: '走法已发送，等待主机确认...',
+        duration: 2000,
+      });
+      set({ isWaitingForHost: true });
+      return;
+    }
+
+    // ---- 路径 C：Host/单机 — 本地引擎执行 ----
+
     const batch: MoveBatch = {
       moveId: generateInstanceId(),
       playerId: cp.id,
       moves,
     };
 
-    // 重要：使用 gameState 调用引擎（而非 optimisticState）。
-    // optimisticState 中手牌已被本地操作移除，引擎无法计算 scoreFromHand。
-    // gameState 保留了回合开始时的手牌状态，引擎可以正确验证。
     const result = applyMove(gameState, batch);
     if (isE(result)) {
       const snapshot = turnSnapshot;
@@ -562,8 +640,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   drawTileAction: () => {
-    const { gameState } = get();
+    const { gameState, p2pMode } = get();
     if (!gameState) return;
+
+    // Guest 模式：发送摸牌请求给 Host
+    if (p2pMode?.type === 'guest') {
+      get().sendP2PDrawTile();
+      useToastStore.getState().toast({
+        type: 'info',
+        message: '摸牌请求已发送，等待主机确认...',
+        duration: 2000,
+      });
+      set({ isWaitingForHost: true });
+      return;
+    }
 
     // 使用 gameState（最后提交的状态）而非 optimisticState，
     // 这样摸牌时玩家未提交的桌面操作会被丢弃（摸牌 = 放弃出牌）。
@@ -617,8 +707,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   passTurnAction: () => {
-    const { gameState } = get();
+    const { gameState, p2pMode } = get();
     if (!gameState) return;
+
+    // Guest 模式：发送跳过请求给 Host
+    if (p2pMode?.type === 'guest') {
+      get().sendP2PPassTurn();
+      useToastStore.getState().toast({
+        type: 'info',
+        message: '跳过请求已发送，等待主机确认...',
+        duration: 2000,
+      });
+      set({ isWaitingForHost: true });
+      return;
+    }
 
     const cp = gameState.players[gameState.currentPlayerIndex];
     const pr = passTurn(gameState, cp.id);
@@ -795,6 +897,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
         timer: startTimerFn(resetTimer(createTimer(ns.config.turnTimeLimitSeconds))),
       });
 
+      // Host 超时也需要广播给 Guest
+      broadcastIfHost(ns, get()._hostRoom);
+
       if (ns.phase !== 'GAME_OVER' && ns.players[ns.currentPlayerIndex]?.isBot) {
         setTimeout(() => get().botMove([]), 500);
       }
@@ -826,19 +931,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   canCommit: () => {
-    const os = get().optimisticState;
-    if (!os) return false;
-    const p = os.players[os.currentPlayerIndex];
+    const { optimisticState, isWaitingForHost } = get();
+    if (!optimisticState || isWaitingForHost) return false;
+    const p = optimisticState.players[optimisticState.currentPlayerIndex];
     if (!p || p.isBot) return false;
-    return os.turnPhase === 'ARRANGING';
+    return optimisticState.turnPhase === 'ARRANGING';
   },
 
   canDraw: () => {
-    const os = get().optimisticState;
-    if (!os) return false;
-    const p = os.players[os.currentPlayerIndex];
+    const { optimisticState, isWaitingForHost } = get();
+    if (!optimisticState || isWaitingForHost) return false;
+    const p = optimisticState.players[optimisticState.currentPlayerIndex];
     if (!p || p.isBot) return false;
-    return os.turnPhase === 'ARRANGING' || os.turnPhase === 'DRAW_REQUIRED';
+    return optimisticState.turnPhase === 'ARRANGING' || optimisticState.turnPhase === 'DRAW_REQUIRED';
   },
 
   // ---- P2P 操作 ----
@@ -919,6 +1024,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       selectedHandIds: [],
       selectedBoardIds: [],
       hintedTileIds: [],
+      isWaitingForHost: false, // 收到权威状态，清除等待标志
     });
   },
 

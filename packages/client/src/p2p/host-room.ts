@@ -102,24 +102,34 @@ export class HostRoom {
     });
   }
 
-  /** 广播完整游戏状态 */
+  /** 广播完整游戏状态（每个 Guest 只看到自己的手牌，对手手牌被遮罩） */
   broadcastGameState(gameState: GameState, playerHands?: Map<string, { playerId: string; handTiles: import('@rummikub/shared').TileInstance[] }>): void {
-    // 缓存状态用于重连
+    // 缓存原始状态用于重连
     this._lastGameState = gameState;
 
-    // 对每个连接的客户端发送完整状态 + 各自的手牌
+    // 对每个连接的客户端发送遮罩后的状态
     for (const [peerId, info] of this._connections) {
       if (peerId === this.manager.peerId) continue; // 跳过主机自己
 
-      // 找到该客户端在 players 数组中的索引
       const playerInfo = this._players.get(peerId);
       if (!playerInfo) continue;
 
       const indexInGame = gameState.players.findIndex(p => p.id === playerInfo.id);
 
+      // 为每个 Guest 构建隐私安全的 GameState：
+      // 1. 剥离引擎内部 _deck 字段
+      // 2. 只保留该 Guest 自己的手牌，其他玩家的 handTiles 置空
+      const { _deck, ...cleanState } = gameState as any;
+      const maskedState: GameState = {
+        ...cleanState,
+        players: gameState.players.map(p =>
+          p.id === playerInfo.id ? p : { ...p, handTiles: [] },
+        ),
+      } as GameState;
+
       const msg: HostMessage = {
         type: 'full_state',
-        gameState,
+        gameState: maskedState,
         yourPlayerIndex: indexInGame >= 0 ? indexInGame : 0,
       };
       this.manager.send(peerId, msg);
@@ -213,18 +223,27 @@ export class HostRoom {
         hostId: this._hostPlayerId,
       });
 
-      // 如果游戏已经开始，发送完整状态
+      // 如果游戏已经开始，发送完整状态（遮罩后）
       if (this._lastGameState) {
         const indexInGame = this._lastGameState.players.findIndex(
           p => p.id === existingPlayer.id,
         );
+        const { _deck: d, ...cleanState } = this._lastGameState as any;
+        const maskedState: GameState = {
+          ...cleanState,
+          players: this._lastGameState.players.map(p =>
+            p.id === existingPlayer.id ? p : { ...p, handTiles: [] },
+          ),
+        } as GameState;
         this.manager.send(clientId, {
           type: 'full_state',
-          gameState: this._lastGameState,
+          gameState: maskedState,
           yourPlayerIndex: indexInGame >= 0 ? indexInGame : 0,
         });
       }
 
+      // 通知 UI 连接状态恢复
+      this.emitConnectionState(this.manager.state);
       console.log(`[HostRoom] Client ${clientId} reconnected`);
       return;
     }
@@ -280,7 +299,7 @@ export class HostRoom {
       }
     }, RECONNECT_WINDOW_MS);
 
-    this.callbacks.onPlayerLeft?.(conn?.playerId ?? '');
+    // 通知 UI 连接状态变更（但不移除玩家，保留重连机会）
     this.emitConnectionState(this.manager.state);
   }
 
