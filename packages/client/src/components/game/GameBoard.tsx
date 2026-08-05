@@ -127,7 +127,12 @@ export default function GameBoard({ onBackToLobby }: GameBoardProps) {
       }
       return false;
     }
-    // Host/单机: 当前玩家非 Bot 即可操作
+    // P2P Host: 只有轮到主机自己时才能操作
+    if (p2pMode?.type === 'host') {
+      const hostIdx = optimisticState.players.findIndex(p => p.id === 'host-player');
+      return hostIdx >= 0 && optimisticState.currentPlayerIndex === hostIdx;
+    }
+    // 单机: 当前玩家非 Bot 即可操作
     return true;
   })();
 

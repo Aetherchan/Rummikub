@@ -20,6 +20,17 @@ const PEER_CONFIG: PeerJSOption = {
   // 使用 PeerJS 官方免费信令服务器（可根据需要切换）
   // host: '0.peerjs.com', port: 443, secure: true, // 默认
   debug: 0, // 0=off, 1=errors, 2=warnings, 3=all
+  config: {
+    iceServers: [
+      {
+        urls: 'turn:39.102.208.49:3478',
+        username: 'rummikub',
+        credential: 'syt2006Flying',
+      },
+      // Google STUN 作为备选
+      { urls: 'stun:stun.l.google.com:19302' },
+    ],
+  },
 };
 
 /** 生成 6 位房间码（从 peer id 派生） */

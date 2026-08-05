@@ -931,16 +931,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   canCommit: () => {
-    const { optimisticState, isWaitingForHost } = get();
+    const { optimisticState, isWaitingForHost, p2pMode } = get();
     if (!optimisticState || isWaitingForHost) return false;
+    // P2P Host: 只有轮到主机自己时才能出牌
+    if (p2pMode?.type === 'host') {
+      const hostIdx = optimisticState.players.findIndex(player => player.id === 'host-player');
+      if (hostIdx >= 0 && optimisticState.currentPlayerIndex !== hostIdx) return false;
+    }
     const p = optimisticState.players[optimisticState.currentPlayerIndex];
     if (!p || p.isBot) return false;
     return optimisticState.turnPhase === 'ARRANGING';
   },
 
   canDraw: () => {
-    const { optimisticState, isWaitingForHost } = get();
+    const { optimisticState, isWaitingForHost, p2pMode } = get();
     if (!optimisticState || isWaitingForHost) return false;
+    // P2P Host: 只有轮到主机自己时才能摸牌
+    if (p2pMode?.type === 'host') {
+      const hostIdx = optimisticState.players.findIndex(player => player.id === 'host-player');
+      if (hostIdx >= 0 && optimisticState.currentPlayerIndex !== hostIdx) return false;
+    }
     const p = optimisticState.players[optimisticState.currentPlayerIndex];
     if (!p || p.isBot) return false;
     return optimisticState.turnPhase === 'ARRANGING' || optimisticState.turnPhase === 'DRAW_REQUIRED';
